@@ -198,6 +198,13 @@ export default function LearnPage({ params }: LearnPageProps) {
       // Add new response to history
       setTeacherResponses(prev => [...prev, data.teacherResponse])
 
+      // Check if AI determined lesson is complete
+      if (data.lessonComplete === true) {
+        // Navigate to completion screen after audio finishes
+        // Store completion flag to trigger navigation after audio
+        localStorage.setItem('aiTriggeredCompletion', 'true')
+      }
+
       // Set state to speaking and play audio
       setVoiceState('speaking')
 
@@ -210,6 +217,13 @@ export default function LearnPage({ params }: LearnPageProps) {
         audio.addEventListener('ended', () => {
           setVoiceState('idle')
           audioRef.current = null
+
+          // Check if AI triggered completion - navigate after audio finishes
+          const aiCompleted = localStorage.getItem('aiTriggeredCompletion')
+          if (aiCompleted === 'true') {
+            localStorage.removeItem('aiTriggeredCompletion')
+            router.push(`/lessons/${lessonId}/complete`)
+          }
         })
 
         // Handle audio errors gracefully
@@ -326,26 +340,37 @@ export default function LearnPage({ params }: LearnPageProps) {
         />
       )}
 
-      {/* Top-Left Navigation & Metadata - Fixed positioning */}
-      <div className="fixed top-0 left-0 z-10 p-4 bg-white/95 backdrop-blur-sm shadow-sm">
-        <button
-          onClick={() => router.push('/lessons')}
-          className="flex items-center gap-2 text-gray-600 hover:text-primary mb-3 transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
-        >
-          <ArrowLeft size={18} />
-          <span className="text-sm font-medium">Back to Lessons</span>
-        </button>
+      {/* Top Navigation & Metadata - Fixed positioning */}
+      <div className="fixed top-0 left-0 right-0 z-10 p-4 bg-white/95 backdrop-blur-sm shadow-sm flex justify-between items-start">
+        {/* Left: Back button and lesson info */}
+        <div>
+          <button
+            onClick={() => router.push('/lessons')}
+            className="flex items-center gap-2 text-gray-600 hover:text-primary mb-3 transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
+          >
+            <ArrowLeft size={18} />
+            <span className="text-sm font-medium">Back to Lessons</span>
+          </button>
 
-        {lesson && (
-          <div className="text-xs">
-            <div className="font-semibold text-primary mb-1">
-              {lesson.subject.toUpperCase()}: {lesson.title}
+          {lesson && (
+            <div className="text-xs">
+              <div className="font-semibold text-primary mb-1">
+                {lesson.subject.toUpperCase()}: {lesson.title}
+              </div>
+              <div className="text-gray-500">
+                Grade {lesson.grade_level} | {lesson.estimated_duration} min | <span className="capitalize">{lesson.difficulty}</span>
+              </div>
             </div>
-            <div className="text-gray-500">
-              Grade {lesson.grade_level} | {lesson.estimated_duration} min | <span className="capitalize">{lesson.difficulty}</span>
-            </div>
-          </div>
-        )}
+          )}
+        </div>
+
+        {/* Right: End Class button */}
+        <button
+          onClick={() => router.push(`/lessons/${lessonId}/complete`)}
+          className="px-4 py-2 bg-success hover:bg-success/90 text-white font-semibold rounded-lg shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-success focus:ring-offset-2"
+        >
+          End Class
+        </button>
       </div>
 
       {/* Scrollable Whiteboard Area - Full screen canvas */}

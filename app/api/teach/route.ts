@@ -29,7 +29,8 @@ import { saveInteraction } from '@/lib/memory/session-manager';
  *     displayText: string,      // Text for screen display
  *     svg: string | null,       // Optional SVG diagram
  *     audioBase64: string       // MP3 audio from audioText
- *   }
+ *   },
+ *   lessonComplete: boolean     // True when student has mastered all objectives
  * }
  */
 export async function POST(request: NextRequest) {
@@ -92,7 +93,7 @@ export async function POST(request: NextRequest) {
     // Convert audio buffer to base64 for JSON response
     const audioBase64 = audioBuffer.toString('base64');
 
-    // Return structured response with separate audio/display text and SVG
+    // Return structured response with separate audio/display text, SVG, and completion flag
     return NextResponse.json({
       success: true,
       teacherResponse: {
@@ -100,7 +101,8 @@ export async function POST(request: NextRequest) {
         displayText: aiResponse.displayText,
         svg: aiResponse.svg,
         audioBase64
-      }
+      },
+      lessonComplete: aiResponse.lessonComplete
     });
 
   } catch (error) {

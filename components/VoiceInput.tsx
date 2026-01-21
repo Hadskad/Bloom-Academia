@@ -7,7 +7,7 @@
  * Features:
  * - Secure temporary API key fetching
  * - Real-time transcription display
- * - Endpoint detection (auto-stops on pause)
+ * - Manual stop control (user clicks when done)
  * - Visual feedback (animated while listening)
  * - Error handling
  *
@@ -44,6 +44,23 @@ export function VoiceInput({ onTranscript, disabled = false, onStateChange }: Vo
       setError(null)
       setTranscript('')
       finalTranscriptRef.current = ''
+
+      // Check microphone permission first
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setError('Microphone access is not supported in this browser')
+        return
+      }
+
+      try {
+        // Request microphone permission
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        // Stop the stream immediately - we just needed to check permission
+        stream.getTracks().forEach(track => track.stop())
+      } catch (permissionError) {
+        console.error('Microphone permission denied:', permissionError)
+        setError('Microphone access denied. Please allow microphone access and try again.')
+        return
+      }
 
       // Initialize Soniox client with callbacks
       sonioxClient.current = new SonioxClient({
@@ -108,7 +125,7 @@ export function VoiceInput({ onTranscript, disabled = false, onStateChange }: Vo
       sonioxClient.current.start({
         model: 'stt-rt-preview',
         languageHints: ['en'],
-        enableEndpointDetection: true // Auto-finalize on pause
+        enableEndpointDetection: false // User controls when to stop
       })
     } catch (err) {
       console.error('Error starting voice input:', err)
@@ -138,9 +155,16 @@ export function VoiceInput({ onTranscript, disabled = false, onStateChange }: Vo
         <Mic className="text-white" size={32} />
       </button>
 
-      {/* Error Display - Only show errors, hide transcript and status */}
+      {/* Instruction Message - Show when listening */}
+      {isListening && (
+        <div className="mt-4 p-3 bg-primary/10 border border-primary/30 rounded-lg">
+          <p className="text-primary text-sm font-medium">Click the button again when you're done speaking</p>
+        </div>
+      )}
+
+      {/* Error Display */}
       {error && (
-        <div className="absolute bottom-28 max-w-md p-3 bg-error/10 border border-error rounded-lg">
+        <div className="mt-4 p-3 bg-error/10 border border-error rounded-lg">
           <p className="text-error text-sm">{error}</p>
         </div>
       )}

@@ -23,7 +23,7 @@ export function Hero() {
 
           {/* Subheadline */}
           <p className="text-xl md:text-2xl text-gray-700 mb-12 max-w-3xl mx-auto">
-            Every child deserves a world-class teacher. Now they have one.
+            One school, powered by a single intelligent teacher, educating millions of children, across multiple languages, personally and at scale. Welcome to Bloom Academia.
           </p>
 
           {/* Demo Video Placeholder */}

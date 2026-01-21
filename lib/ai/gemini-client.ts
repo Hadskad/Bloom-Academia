@@ -14,11 +14,13 @@ import { z } from 'zod';
 /**
  * Zod schema for structured teaching response
  * Separates audio text (for TTS) from display text and SVG
+ * Includes lessonComplete flag for AI-triggered lesson completion
  */
 const teachingResponseSchema = z.object({
-  audioText: z.string().describe('Text optimized for speech synthesis (natural spoken language)'),
-  displayText: z.string().describe('Text to display on screen that can reference the visual diagram'),
-  svg: z.string().nullable().describe('SVG code for visual diagram (must be valid SVG XML or null)')
+  audioText: z.string().describe('Text optimized for speech synthesis (natural spoken language), should reference the visual diagram when available'),
+  displayText: z.string().describe('Text to display on screen that can reference the visual diagram, no markdown formatting '),
+  svg: z.string().nullable().describe('SVG code for visual diagram (must be valid SVG XML or null)'),
+  lessonComplete: z.boolean().describe('Set to true ONLY when the student has demonstrated complete mastery of ALL lesson objectives through their responses and understanding. Be strict - partial understanding is not enough.')
 });
 
 export type TeachingResponse = z.infer<typeof teachingResponseSchema>;

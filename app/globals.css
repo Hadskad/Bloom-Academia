@@ -3,14 +3,253 @@
 @tailwind utilities;
 
 @layer base {
+  /* CSS Variables for Design System */
   :root {
     --primary: #4A90E2;
     --success: #7ED321;
     --accent: #F5A623;
     --error: #E74C3C;
+    --gray-50: #FAFAFA;
+    --gray-800: #1F2937;
   }
 
+  /* Base Typography */
   body {
-    @apply bg-white text-gray-800;
+    @apply bg-white text-gray-800 antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+  }
+
+  /* Headings use Inter font (loaded in layout.tsx) */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold text-gray-800;
+  }
+
+  h1 {
+    @apply text-5xl font-bold;
+  }
+
+  h2 {
+    @apply text-4xl font-semibold;
+  }
+
+  h3 {
+    @apply text-2xl font-semibold;
+  }
+
+  /* Accessibility: Focus styles */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2;
+  }
+
+  /* Skip to main content link for screen readers */
+  .skip-to-main {
+    @apply absolute -top-full left-0 z-50 bg-primary text-white px-4 py-2 transition-all;
+  }
+
+  .skip-to-main:focus {
+    @apply top-0;
+  }
+
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Better focus visibility for keyboard navigation */
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2;
+  }
+
+  /* Disabled state */
+  button:disabled,
+  input:disabled,
+  textarea:disabled,
+  select:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  /* Loading state cursor */
+  .loading {
+    cursor: wait;
+  }
+
+  /* Transitions */
+  button, a, input, textarea, select {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer components {
+  /* Common Card Pattern */
+  .card {
+    @apply bg-white border border-gray-200 rounded-lg shadow-md hover:shadow-lg transition-shadow p-6;
+  }
+
+  /* Primary Button Pattern (matches shadcn/ui Button) */
+  .btn-primary {
+    @apply bg-primary hover:bg-primary/90 text-white font-semibold px-6 py-3 rounded-lg transition-colors;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Secondary Button Pattern */
+  .btn-secondary {
+    @apply border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold px-6 py-3 rounded-lg transition-colors;
+    @apply focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2;
+  }
+
+  /* Success Button Pattern */
+  .btn-success {
+    @apply bg-success hover:bg-success/90 text-white font-semibold px-6 py-3 rounded-lg transition-colors;
+    @apply focus:outline-none focus:ring-2 focus:ring-success focus:ring-offset-2;
+  }
+
+  /* Input Field Pattern */
+  .input-field {
+    @apply w-full px-4 py-3 border border-gray-300 rounded-lg;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent;
+    @apply disabled:bg-gray-100 disabled:cursor-not-allowed;
+  }
+
+  /* Skeleton Loader */
+  .skeleton {
+    @apply animate-pulse bg-gray-200 rounded;
+  }
+
+  /* Badge Pattern */
+  .badge {
+    @apply px-3 py-1 rounded-md text-sm font-medium;
+  }
+
+  .badge-success {
+    @apply bg-success/20 text-success;
+  }
+
+  .badge-accent {
+    @apply bg-accent/20 text-accent;
+  }
+
+  .badge-error {
+    @apply bg-error/20 text-error;
+  }
+
+  /* Whiteboard Container */
+  .whiteboard {
+    @apply w-full bg-white rounded-lg p-8 flex items-center justify-center border border-gray-200 shadow-sm;
+    /* GPU acceleration for smooth rendering */
+    transform: translateZ(0);
+    will-change: contents;
+    /* Prevent layout thrashing */
+    contain: layout style paint;
+  }
+
+  .whiteboard svg {
+    @apply max-w-full max-h-full h-auto w-auto;
+  }
+
+  /* Voice Indicator States */
+  .voice-indicator {
+    @apply w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all;
+  }
+
+  .voice-indicator.idle {
+    @apply bg-gray-300;
+  }
+
+  .voice-indicator.listening {
+    @apply bg-primary animate-pulse;
+  }
+
+  .voice-indicator.thinking {
+    @apply bg-accent;
+  }
+
+  .voice-indicator.speaking {
+    @apply bg-success animate-pulse;
+  }
+}
+
+@layer utilities {
+  /* Text Truncation */
+  .text-truncate {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  /* Line Clamp Utilities */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Screen Reader Only */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Focus Visible Utilities */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2;
+  }
+
+  /* Container with max-width */
+  .container-responsive {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Responsive Padding */
+  .section-padding {
+    @apply py-8 md:py-12 lg:py-16;
+  }
+
+  /* Touch Target Size (minimum 44x44px for accessibility) */
+  .touch-target {
+    @apply min-w-[44px] min-h-[44px];
+  }
+}
+
+/* Print Styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* Reduced Motion for Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* High Contrast Mode Support */
+@media (prefers-contrast: high) {
+  button, a {
+    border: 2px solid currentColor;
   }
 }

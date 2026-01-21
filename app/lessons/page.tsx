@@ -20,6 +20,9 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { retryWithBackoff, isOnline } from '@/lib/utils/network'
+import { formatErrorForUser, isNetworkError } from '@/lib/utils/error-handler'
+import { TrendingUp } from 'lucide-react'
 
 interface Lesson {
   id: string
@@ -54,24 +57,44 @@ export default function LessonsPage() {
   const fetchLessons = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch('/api/lessons')
+      setError(null)
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch lessons')
+      // Check if online before attempting fetch
+      if (!isOnline()) {
+        setError('No internet connection. Please check your network and try again.')
+        return
       }
 
-      const data = await response.json()
+      // Use retry logic with exponential backoff
+      const data = await retryWithBackoff(async () => {
+        const response = await fetch('/api/lessons')
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch lessons')
+        }
+
+        return response.json()
+      })
+
       setLessons(data.lessons)
     } catch (err) {
       console.error('Error fetching lessons:', err)
-      setError('Failed to load lessons. Please try again.')
+
+      // Use error handler to format user-friendly message
+      const errorMessage = isNetworkError(err)
+        ? 'Network connection failed. Please check your internet and try again.'
+        : formatErrorForUser(err)
+
+      setError(errorMessage)
     } finally {
       setIsLoading(false)
     }
   }
 
   const startLesson = (lessonId: string) => {
-    router.push(`/learn/${lessonId}`)
+    // Route to lesson intro screen (Day 17)
+    // Intro screen will create session and then route to /learn/[lessonId]
+    router.push(`/lessons/${lessonId}/intro`)
   }
 
   // Get difficulty badge styling
@@ -135,13 +158,24 @@ export default function LessonsPage() {
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-5xl font-bold text-gray-800 mb-2">
-            Choose Your Lesson
-          </h1>
-          <p className="text-lg text-gray-600">
-            Select a lesson to start learning with your AI teacher
-          </p>
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-5xl font-bold text-gray-800 mb-2">
+              Choose Your Lesson
+            </h1>
+            <p className="text-lg text-gray-600">
+              Select a lesson to start learning with your AI teacher
+            </p>
+          </div>
+          <Button
+            onClick={() => router.push('/progress')}
+            variant="outline"
+            className="flex items-center gap-2"
+            aria-label="View your learning progress"
+          >
+            <TrendingUp size={20} />
+            View Progress
+          </Button>
         </div>
 
         {/* Lessons Grid */}

@@ -28,7 +28,7 @@ export function Vision() {
             Our Vision:
           </h2>
           <p className="text-xl text-gray-700 max-w-3xl mx-auto">
-           We envision a world where a child’s future is no longer limited by geography, income, or access to teachers, where every child, anywhere on Earth, grows up with a world class education. Bloom Academia exists to become the first truly universal school: one that listens, adapts, and delivers world‑class teaching, personalized to every child. In Sha Allah, we aim to build the infrastructure that makes quality education a human constant, not a privilege.
+           A world where a child’s future is no longer limited by geography, income, or access to teachers, where every child, anywhere on Earth, grows up with a world class education. Bloom Academia exists to become the first truly universal school: one that listens, adapts, and delivers world‑class teaching, personalized to every child. In Sha Allah, we aim to build the infrastructure that makes quality education a human constant, not a privilege.
           </p>
         </div>
 
