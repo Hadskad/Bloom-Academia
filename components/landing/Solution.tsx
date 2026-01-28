@@ -25,7 +25,7 @@ export function Solution() {
         {/* Section Header */}
         <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
-            Meet Bloom Academia
+            Bloom Academia
           </h2>
           <p className="text-xl text-gray-700 max-w-3xl mx-auto">
             A revolutionary AI-powered school that brings world-class education to every student, everywhere.

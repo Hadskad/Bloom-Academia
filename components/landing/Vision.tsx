@@ -28,23 +28,18 @@ export function Vision() {
             Our Vision:
           </h2>
           <p className="text-xl text-gray-700 max-w-3xl mx-auto">
-           A world where a child’s future is no longer limited by geography, income, or access to teachers, where every child, anywhere on Earth, grows up with a world class education. Bloom Academia exists to become the first truly universal school: one that listens, adapts, and delivers world‑class teaching, personalized to every child. In Sha Allah, we aim to build the infrastructure that makes quality education a human constant, not a privilege.
+           A world where a child’s future is no longer limited by geography, disability, income, or access to teachers, where every child, anywhere on Earth, grows up with a world class education. Bloom Academia exists to become the first truly universal school: one that listens, adapts, and delivers world‑class teaching, personalized to every child. In Sha Allah, we aim to build the infrastructure that makes quality education a human constant, not a privilege.
           </p>
         </div>
 
-        {/* Global Reach Map Placeholder */}
+        {/* Global Reach Map */}
         <div className="mb-16">
-          <div className="aspect-[16/9] bg-gradient-to-br from-primary to-blue-700 rounded-2xl shadow-2xl flex items-center justify-center relative overflow-hidden">
-            <div className="text-center text-white z-10">
-              <Globe className="w-24 h-24 mx-auto mb-4 animate-pulse" />
-              <p className="text-2xl font-semibold">Global Reach Map Placeholder</p>
-              <p className="text-sm mt-2 opacity-90 max-w-md mx-auto px-4">
-                Visualization showing worldwide impact and accessibility
-              </p>
-            </div>
-            {/* Decorative circles */}
-            <div className="absolute top-10 left-10 w-32 h-32 bg-white/10 rounded-full"></div>
-            <div className="absolute bottom-10 right-10 w-40 h-40 bg-white/10 rounded-full"></div>
+          <div className="rounded-2xl shadow-2xl overflow-hidden bg-gray-100">
+            <img
+              src="/images/world-map.png"
+              alt="World map showing Bloom Academia's global reach and accessibility"
+              className="w-full h-auto"
+            />
           </div>
         </div>
 

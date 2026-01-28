@@ -19,8 +19,14 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 import { VoiceInput } from '@/components/VoiceInput'
 import { Toast, Banner } from '@/components/Toast'
+import { TeacherAvatar, getAgentInfo } from '@/components/TeacherAvatar'
+import { AssessmentMode } from '@/components/AssessmentMode'
 import { ArrowLeft, Loader2, Volume2 } from 'lucide-react'
 import { fetchWithRetry, getErrorMessage } from '@/lib/utils/retry'
 import { useOnlineStatus } from '@/lib/hooks/useOnlineStatus'
@@ -63,7 +69,12 @@ export default function LearnPage({ params }: LearnPageProps) {
     displayText: string
     svg: string | null
     audioBase64: string
+    agentName: string
+    handoffMessage?: string
   }[]>([])
+
+  // Track current agent for voice indicator
+  const [currentAgent, setCurrentAgent] = useState<string>('coordinator')
 
   // Voice state management
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
@@ -73,6 +84,9 @@ export default function LearnPage({ params }: LearnPageProps) {
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const isOnline = useOnlineStatus()
   const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Assessment mode state
+  const [showAssessment, setShowAssessment] = useState(false)
 
   // Load lesson and start session
   useEffect(() => {
@@ -125,11 +139,92 @@ export default function LearnPage({ params }: LearnPageProps) {
 
       const { sessionId: newSessionId } = await sessionResponse.json()
       setSessionId(newSessionId)
+
+      // ✅ AUTO-START LESSON: Trigger coordinator to greet student and introduce lesson
+      await sendInitialGreeting(userId, newSessionId, lessonId, currentLesson)
     } catch (err) {
       console.error('Error loading lesson:', err)
       setError('Failed to load lesson. Please try again.')
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  // Auto-start lesson with Coordinator greeting
+  async function sendInitialGreeting(userId: string, sessionId: string, lessonId: string, lesson: Lesson) {
+    try {
+      setVoiceState('thinking')
+
+      // Send greeting prompt to coordinator
+      const greetingMessage = `[AUTO_START] Begin the lesson by greeting the student warmly and introducing today's lesson: "${lesson.title}". Mention the learning objective briefly: "${lesson.learning_objective}". Keep it brief (2-3 sentences) and engaging, end by asking if ready to proceed.`
+
+      const response = await fetchWithRetry(
+        '/api/teach/multi-ai',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userId,
+            sessionId,
+            lessonId,
+            userMessage: greetingMessage
+          })
+        },
+        {
+          maxRetries: 2,
+          onRetry: (attempt, error) => {
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[Learn] Retry greeting attempt ${attempt}/2`, error)
+            }
+          }
+        }
+      )
+
+      const data = await response.json()
+
+      // Add greeting response to history
+      setTeacherResponses([data.teacherResponse])
+
+      // Track agent
+      if (data.teacherResponse.agentName) {
+        setCurrentAgent(data.teacherResponse.agentName)
+      }
+
+      // Play greeting audio
+      setVoiceState('speaking')
+
+      try {
+        const audio = new Audio(`data:audio/mp3;base64,${data.teacherResponse.audioBase64}`)
+        audioRef.current = audio
+
+        audio.addEventListener('ended', () => {
+          setVoiceState('idle')
+          audioRef.current = null
+        })
+
+        audio.addEventListener('error', (e) => {
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[Learn] Greeting audio error:', e)
+          }
+          setVoiceState('idle')
+          audioRef.current = null
+        })
+
+        await audio.play()
+      } catch (audioError) {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('[Learn] Greeting audio play failed:', audioError)
+        }
+        setVoiceState('idle')
+      }
+    } catch (err) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('[Learn] Failed to send initial greeting:', err)
+      }
+      // Don't show error to user, they can still start manually
+      setVoiceState('idle')
     }
   }
 
@@ -167,9 +262,10 @@ export default function LearnPage({ params }: LearnPageProps) {
       setError(null)
       setToastMessage(null)
 
-      // Send to AI teacher endpoint with retry logic
+      // Send to Multi-AI teacher endpoint with retry logic
+      // Day 16: Updated from /api/teach to /api/teach/multi-ai for specialist routing
       const response = await fetchWithRetry(
-        '/api/teach',
+        '/api/teach/multi-ai',
         {
           method: 'POST',
           headers: {
@@ -195,13 +291,18 @@ export default function LearnPage({ params }: LearnPageProps) {
 
       const data = await response.json()
 
-      // Add new response to history
+      // Add new response to history (includes agentName from multi-ai endpoint)
       setTeacherResponses(prev => [...prev, data.teacherResponse])
+
+      // Track which agent responded for voice indicator
+      if (data.teacherResponse.agentName) {
+        setCurrentAgent(data.teacherResponse.agentName)
+      }
 
       // Check if AI determined lesson is complete
       if (data.lessonComplete === true) {
-        // Navigate to completion screen after audio finishes
-        // Store completion flag to trigger navigation after audio
+        // Trigger assessment after audio finishes
+        // Store completion flag to trigger assessment after audio
         localStorage.setItem('aiTriggeredCompletion', 'true')
       }
 
@@ -218,11 +319,11 @@ export default function LearnPage({ params }: LearnPageProps) {
           setVoiceState('idle')
           audioRef.current = null
 
-          // Check if AI triggered completion - navigate after audio finishes
+          // Check if AI triggered completion - start assessment after audio finishes
           const aiCompleted = localStorage.getItem('aiTriggeredCompletion')
           if (aiCompleted === 'true') {
             localStorage.removeItem('aiTriggeredCompletion')
-            router.push(`/lessons/${lessonId}/complete`)
+            setShowAssessment(true)
           }
         })
 
@@ -309,14 +410,29 @@ export default function LearnPage({ params }: LearnPageProps) {
             {error}
           </div>
           <button
-            onClick={() => router.push('/lessons')}
+            onClick={() => router.push('/dashboard')}
             className="text-primary hover:underline"
           >
-            Back to Lessons
+            Back to Dashboard
           </button>
         </div>
       </div>
     )
+  }
+
+  // Show assessment mode if triggered
+  if (showAssessment && lessonId && sessionId) {
+    const userId = localStorage.getItem('userId')
+    if (userId) {
+      return (
+        <AssessmentMode
+          lessonId={lessonId}
+          userId={userId}
+          sessionId={sessionId}
+          onComplete={() => router.push(`/lessons/${lessonId}/complete`)}
+        />
+      )
+    }
   }
 
   return (
@@ -345,11 +461,11 @@ export default function LearnPage({ params }: LearnPageProps) {
         {/* Left: Back button and lesson info */}
         <div>
           <button
-            onClick={() => router.push('/lessons')}
+            onClick={() => router.push('/dashboard')}
             className="flex items-center gap-2 text-gray-600 hover:text-primary mb-3 transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
           >
             <ArrowLeft size={18} />
-            <span className="text-sm font-medium">Back to Lessons</span>
+            <span className="text-sm font-medium">Back to Dashboard</span>
           </button>
 
           {lesson && (
@@ -366,7 +482,7 @@ export default function LearnPage({ params }: LearnPageProps) {
 
         {/* Right: End Class button */}
         <button
-          onClick={() => router.push(`/lessons/${lessonId}/complete`)}
+          onClick={() => setShowAssessment(true)}
           className="px-4 py-2 bg-success hover:bg-success/90 text-white font-semibold rounded-lg shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-success focus:ring-offset-2"
         >
           End Class
@@ -380,16 +496,35 @@ export default function LearnPage({ params }: LearnPageProps) {
           {teacherResponses.length === 0 ? (
             <div className="text-center py-20">
               <p className="text-gray-400 text-lg">
-                Click the microphone below to start your lesson
+                Your teacher is preparing the lesson...
               </p>
             </div>
           ) : (
             teacherResponses.map((response, index) => (
               <div key={index} className="space-y-6">
-                {/* Teacher Text Response */}
+                {/* Handoff Message (if agent switched) */}
+                {response.handoffMessage && (
+                  <div className="text-center text-sm text-gray-500 italic">
+                    {response.handoffMessage}
+                  </div>
+                )}
+
+                {/* Teacher Text Response with Agent Avatar */}
                 <div className="bg-primary/5 border border-primary/20 rounded-lg p-6">
-                  <h3 className="font-semibold text-primary text-sm mb-2">Teacher:</h3>
-                  <p className="text-gray-800 leading-relaxed">{response.displayText}</p>
+                  <div className="flex items-center gap-3 mb-3">
+                    <TeacherAvatar
+                      agentName={response.agentName || 'coordinator'}
+                      size="sm"
+                    />
+                  </div>
+                  <div className="prose prose-sm max-w-none text-gray-800">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkMath]}
+                      rehypePlugins={[rehypeKatex]}
+                    >
+                      {response.displayText}
+                    </ReactMarkdown>
+                  </div>
                 </div>
 
                 {/* SVG Diagram (if exists) */}
@@ -417,7 +552,7 @@ export default function LearnPage({ params }: LearnPageProps) {
       {/* Bottom-Center Controls - Fixed positioning */}
       <div className="fixed bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-white via-white to-transparent py-6">
         <div className="flex flex-col items-center gap-3">
-          {/* Voice Indicator - Small, near mic */}
+          {/* Voice Indicator - Shows agent name when thinking/speaking */}
           {voiceState !== 'idle' && (
             <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-md border border-gray-200">
               {voiceState === 'listening' && (
@@ -429,13 +564,20 @@ export default function LearnPage({ params }: LearnPageProps) {
               {voiceState === 'thinking' && (
                 <>
                   <Loader2 className="w-3 h-3 text-accent animate-spin" />
-                  <span className="text-xs font-medium text-accent">Thinking...</span>
+                  <span className="text-xs font-medium text-accent">
+                    {getAgentInfo(currentAgent).name} is thinking...
+                  </span>
                 </>
               )}
               {voiceState === 'speaking' && (
                 <>
+                  <span className="text-base" role="img" aria-label="Speaking">
+                    {getAgentInfo(currentAgent).emoji}
+                  </span>
                   <Volume2 className="w-3 h-3 text-success animate-pulse" />
-                  <span className="text-xs font-medium text-success">Speaking...</span>
+                  <span className="text-xs font-medium text-success">
+                    {getAgentInfo(currentAgent).name} is speaking...
+                  </span>
                 </>
               )}
             </div>

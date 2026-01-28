@@ -3,15 +3,15 @@
 /**
  * Welcome Screen (User Onboarding)
  *
- * Collects basic user information (name, age, grade) and explains microphone usage.
+ * Collects basic user information (name, age, grade, disability) and explains microphone usage.
  * Creates user profile in database and stores userId in localStorage.
  *
  * Flow:
- * 1. User fills out form (name, age, grade)
+ * 1. User fills out form (name, age, grade, disability)
  * 2. User reads microphone explanation
  * 3. On submit, POST to /api/users/create
  * 4. Store userId in localStorage
- * 5. Redirect to /lessons
+ * 5. Redirect to /dashboard
  *
  * Reference: Implementation_Roadmap.md - Day 8
  */
@@ -27,7 +27,8 @@ export default function WelcomePage() {
   const [formData, setFormData] = useState({
     name: '',
     age: '',
-    grade: ''
+    grade: '',
+    disability: ''
   })
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,8 +37,8 @@ export default function WelcomePage() {
   useEffect(() => {
     const existingUserId = localStorage.getItem('userId')
     if (existingUserId) {
-      // User already has an account, redirect to lessons
-      router.push('/lessons')
+      // User already has an account, redirect to dashboard
+      router.push('/dashboard')
     }
   }, [router])
 
@@ -75,7 +76,8 @@ export default function WelcomePage() {
         body: JSON.stringify({
           name: formData.name,
           age: parseInt(formData.age),
-          grade: parseInt(formData.grade)
+          grade: parseInt(formData.grade),
+          disability: formData.disability || null
         })
       })
 
@@ -90,8 +92,8 @@ export default function WelcomePage() {
       // Store userId in localStorage
       localStorage.setItem('userId', data.userId)
 
-      // Redirect to lessons page
-      router.push('/lessons')
+      // Redirect to dashboard page
+      router.push('/dashboard')
     } catch (err) {
       console.error('Error creating user:', err)
       setError('An unexpected error occurred. Please try again.')
@@ -175,6 +177,34 @@ export default function WelcomePage() {
             </select>
           </div>
 
+          {/* Disability Field */}
+          <div className="space-y-2">
+            <Label htmlFor="disability">
+              Do you have any learning or physical disabilities? (Optional)
+            </Label>
+            <select
+              id="disability"
+              value={formData.disability}
+              onChange={(e) => setFormData({ ...formData, disability: e.target.value })}
+              className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+            >
+              <option value="">None</option>
+              <option value="dyslexia">Dyslexia (Reading difficulty)</option>
+              <option value="dyscalculia">Dyscalculia (Math difficulty)</option>
+              <option value="adhd">ADHD (Attention challenges)</option>
+              <option value="autism">Autism Spectrum</option>
+              <option value="visual_impairment">Visual Impairment</option>
+              <option value="hearing_impairment">Hearing Impairment</option>
+              <option value="dysgraphia">Dysgraphia (Writing difficulty)</option>
+              <option value="speech_language">Speech/Language Disorder</option>
+              <option value="physical_disability">Physical Disability</option>
+              <option value="other">Other</option>
+            </select>
+            <p className="text-xs text-gray-500">
+              This helps us personalize your learning experience to better support you.
+            </p>
+          </div>
+
           {/* Microphone Info */}
           <div className="bg-blue-50 border border-primary rounded-lg p-4">
             <h3 className="font-semibold text-primary mb-2 flex items-center gap-2">
@@ -215,10 +245,7 @@ export default function WelcomePage() {
           </Button>
         </form>
 
-        {/* Footer Note */}
-        <p className="text-center text-sm text-gray-500 mt-4">
-          Your progress will be saved on this device
-        </p>
+        
       </div>
     </div>
   )

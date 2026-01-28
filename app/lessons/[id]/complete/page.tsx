@@ -99,9 +99,8 @@ export default function LessonCompletePage({
   }, [])
 
   const goToNextLesson = () => {
-    if (summary?.nextLesson) {
-      router.push(`/lessons/${summary.nextLesson.id}/intro`)
-    }
+    // Redirect to dashboard which will show the curriculum-assigned next lesson
+    router.push('/dashboard')
   }
 
   const goToLessons = () => {
@@ -201,7 +200,7 @@ export default function LessonCompletePage({
             onClick={goToNextLesson}
             className="bg-primary hover:bg-primary/90 text-white font-semibold"
           >
-            Start Next Lesson
+            Start Next Class
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         </div>

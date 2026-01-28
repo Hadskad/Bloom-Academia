@@ -107,3 +107,7 @@ Once setup is complete, you can start developing:
 4. Set up database queries in `lib/db/`
 
 Refer to the project documentation in `project_docs/` for detailed implementation guidelines.
+
+
+
+

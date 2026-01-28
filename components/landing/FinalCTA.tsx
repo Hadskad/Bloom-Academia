@@ -9,7 +9,7 @@ export function FinalCTA() {
   useEffect(() => {
     // Check if user already exists in localStorage
     const userId = localStorage.getItem('userId');
-    setEnrollUrl(userId ? '/lessons' : '/welcome');
+    setEnrollUrl(userId ? '/dashboard' : '/welcome');
   }, []);
 
   return (

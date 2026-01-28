@@ -27,6 +27,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/db/supabase'
 import { analyzeSessionLearning } from '@/lib/memory/learning-analyzer'
+import { markLessonComplete } from '@/lib/curriculum/progress-updater'
+import { getNextLesson } from '@/lib/curriculum/next-lesson'
 
 export async function POST(request: NextRequest) {
   try {
@@ -131,19 +133,53 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get next lesson (same subject, higher grade level)
-    const { data: nextLesson, error: nextLessonError } = await supabase
-      .from('lessons')
-      .select('*')
-      .eq('subject', session.lessons.subject)
-      .gt('grade_level', session.lessons.grade_level)
-      .order('grade_level', { ascending: true })
-      .limit(1)
-      .maybeSingle() // Use maybeSingle() instead of single() to handle no results
+    // Sync with curriculum system if lesson completed
+    if (masteryLevel >= 80) {
+      try {
+        await markLessonComplete(session.user_id, session.lesson_id, masteryLevel)
+        console.log('Curriculum progress updated for lesson completion')
+      } catch (curriculumError) {
+        console.error('Failed to update curriculum progress (non-critical):', curriculumError)
+        // Don't fail the request - progress table already updated
+      }
+    }
 
-    if (nextLessonError) {
-      console.error('Error fetching next lesson:', nextLessonError)
-      // Don't fail the request, just use current lesson as fallback
+    // Get next lesson using curriculum system
+    let nextLesson = null
+    try {
+      // Use curriculum system to get next available lesson
+      nextLesson = await getNextLesson(
+        session.user_id,
+        session.lessons.subject,
+        session.lessons.grade_level
+      )
+
+      // If no next lesson in curriculum, fallback to old logic
+      if (!nextLesson) {
+        const { data: fallback } = await supabase
+          .from('lessons')
+          .select('*')
+          .eq('subject', session.lessons.subject)
+          .gt('grade_level', session.lessons.grade_level)
+          .order('grade_level', { ascending: true })
+          .limit(1)
+          .maybeSingle()
+
+        nextLesson = fallback
+      }
+    } catch (error) {
+      console.error('Error getting next lesson from curriculum:', error)
+      // Fallback to old logic on error
+      const { data: fallback } = await supabase
+        .from('lessons')
+        .select('*')
+        .eq('subject', session.lessons.subject)
+        .gt('grade_level', session.lessons.grade_level)
+        .order('grade_level', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+
+      nextLesson = fallback
     }
 
     // Trigger learning analysis in background (don't await - fire and forget)

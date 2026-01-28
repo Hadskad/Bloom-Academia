@@ -9,7 +9,7 @@ export function Hero() {
   useEffect(() => {
     // Check if user already exists in localStorage
     const userId = localStorage.getItem('userId');
-    setEnrollUrl(userId ? '/lessons' : '/welcome');
+    setEnrollUrl(userId ? '/dashboard' : '/welcome');
   }, []);
 
   return (
@@ -23,17 +23,17 @@ export function Hero() {
 
           {/* Subheadline */}
           <p className="text-xl md:text-2xl text-gray-700 mb-12 max-w-3xl mx-auto">
-            One school, powered by a single intelligent teacher, educating millions of children, across multiple languages, personally and at scale. Welcome to Bloom Academia.
+            One school, run by multiple AI teachers, aiming to educate millions of children, across multiple languages, personally and at scale. Welcome to Bloom Academia.
           </p>
 
-          {/* Demo Video Placeholder */}
+          {/* Demo Showcase */}
           <div className="mb-12 max-w-4xl mx-auto">
-            <div className="aspect-video bg-gradient-to-br from-primary to-blue-600 rounded-2xl shadow-2xl flex items-center justify-center">
-              <div className="text-center text-white">
-                <div className="text-6xl mb-4">▶️</div>
-                <p className="text-xl font-semibold">Demo Video Placeholder</p>
-                <p className="text-sm mt-2 opacity-90">Student learning fractions with voice + whiteboard</p>
-              </div>
+            <div className="aspect-video rounded-2xl shadow-2xl overflow-hidden">
+              <img
+                src="/images/student-learning-2.png"
+                alt="Student learning with Bloom Academia - AI-powered interactive education"
+                className="w-full h-full object-cover"
+              />
             </div>
           </div>
 
