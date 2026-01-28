@@ -10,8 +10,15 @@
 
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
 
-// Initialize client (will auto-detect credentials from GOOGLE_APPLICATION_CREDENTIALS)
-const client = new TextToSpeechClient();
+const credentials = JSON.parse(
+  process.env.GOOGLE_TTS_CREDENTIALS!
+);
+
+
+
+const client = new TextToSpeechClient({
+  credentials
+});
 
 /**
  * Generate speech audio from text using Google Cloud TTS
