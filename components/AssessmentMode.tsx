@@ -228,6 +228,8 @@ export function AssessmentMode({
         lessonCompleted={gradingResult.lessonCompleted}
         nextLesson={gradingResult.nextLesson}
         lessonId={lessonId}
+        assessmentId={assessment!.assessmentId}
+        userId={userId}
         onRetry={() => window.location.reload()}
         onContinue={onComplete}
       />
