@@ -158,13 +158,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Get lesson metadata for context
-    const { data: lesson, error: lessonError } = await supabase
+    const { data: lessonData, error: lessonError } = await supabase
       .from('lessons')
       .select('subject, grade_level, title')
       .eq('id', body.lessonId)
       .single();
 
-    if (lessonError || !lesson) {
+    if (lessonError || !lessonData) {
       console.error('[remediation/generate] Lesson not found:', lessonError);
       return NextResponse.json(
         {
@@ -231,16 +231,16 @@ export async function POST(request: NextRequest) {
       try {
         console.log('[remediation/generate] Generating lesson for:', failedConcept.concept);
 
-        const lesson = await generateRemediationLesson(
+        const remediationContent = await generateRemediationLesson(
           failedConcept.concept,
           failedConcept.displayName,
-          lesson.subject,
-          lesson.grade_level,
+          lessonData.subject,
+          lessonData.grade_level,
           body.userProfile
         );
 
         // Validate generated lesson
-        const validation = validateRemediationLesson(lesson);
+        const validation = validateRemediationLesson(remediationContent);
         if (!validation.valid) {
           console.warn('[remediation/generate] Validation issues:', validation.issues);
           // Continue anyway - non-fatal
@@ -250,13 +250,13 @@ export async function POST(request: NextRequest) {
           concept: failedConcept.concept,
           displayName: failedConcept.displayName,
           severity: failedConcept.severity,
-          lesson
+          lesson: remediationContent
         });
 
         console.log('[remediation/generate] Generated:', {
           concept: failedConcept.concept,
-          title: lesson.title,
-          estimatedTime: lesson.estimatedTimeMinutes
+          title: remediationContent.title,
+          estimatedTime: remediationContent.estimatedTimeMinutes
         });
       } catch (error) {
         console.error(`[remediation/generate] Failed to generate for ${failedConcept.concept}:`, error);
