@@ -9,7 +9,8 @@
       "Bash(npm run build:*)",
       "Bash(npx tsc:*)",
       "Bash(npx tsx:*)",
-      "Bash(npx eslint:*)"
+      "Bash(npx eslint:*)",
+      "WebFetch(domain:ai.google.dev)"
     ]
   }
 }

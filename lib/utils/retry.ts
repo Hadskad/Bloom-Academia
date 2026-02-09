@@ -83,17 +83,15 @@ export async function retryWithBackoff<T>(
  * Following best practices from MDN and Next.js error handling patterns
  */
 function defaultShouldRetry(error: any, attempt: number): boolean {
-  // Parse Response objects
-  if (error instanceof Response) {
-    const status = error.status
-
+  // HttpError carries the HTTP status from fetchWithRetry
+  if (error instanceof HttpError) {
     // Retry on server errors (500-599)
-    if (status >= 500 && status < 600) {
+    if (error.status >= 500 && error.status < 600) {
       return true
     }
 
     // Retry on rate limiting (429)
-    if (status === 429) {
+    if (error.status === 429) {
       return true
     }
 
@@ -116,11 +114,23 @@ function defaultShouldRetry(error: any, attempt: number): boolean {
 }
 
 /**
- * Helper to fetch with retry logic
- * @param url - URL to fetch
- * @param init - Fetch options
- * @param retryOptions - Retry configuration
+ * HTTP error with status and server-provided details.
+ * Thrown by fetchWithRetry so that retry logic and error reporters
+ * can inspect both the status code and the actual error message
+ * returned in the response body.
  */
+export class HttpError extends Error {
+  status: number;
+  details?: string;
+
+  constructor(status: number, details?: string) {
+    super(details || `HTTP ${status}`);
+    this.name = 'HttpError';
+    this.status = status;
+    this.details = details;
+  }
+}
+
 export async function fetchWithRetry(
   url: string,
   init?: RequestInit,
@@ -129,9 +139,17 @@ export async function fetchWithRetry(
   return retryWithBackoff(async () => {
     const response = await fetch(url, init)
 
-    // If response is not ok, throw it so retry logic can evaluate
+    // If response is not ok, read the body for error details before throwing.
+    // The Response body stream can only be consumed once, so we extract now.
     if (!response.ok) {
-      throw response
+      let details: string | undefined;
+      try {
+        const body = await response.json();
+        details = body.details || body.error || JSON.stringify(body);
+      } catch {
+        // Body wasn't JSON or was empty — details stays undefined
+      }
+      throw new HttpError(response.status, details);
     }
 
     return response
@@ -147,27 +165,25 @@ export function getErrorMessage(error: any): string {
     return 'Check your internet connection and try again'
   }
 
-  // HTTP Response errors
-  if (error instanceof Response) {
-    const status = error.status
-
-    if (status >= 500 && status < 600) {
+  // HttpError carries status + details from the server response body
+  if (error instanceof HttpError) {
+    if (error.status >= 500 && error.status < 600) {
       return 'Server error. Please try again in a moment'
     }
 
-    if (status === 429) {
+    if (error.status === 429) {
       return 'Too many requests. Please wait a moment'
     }
 
-    if (status === 401 || status === 403) {
+    if (error.status === 401 || error.status === 403) {
       return 'Authentication error. Please refresh the page'
     }
 
-    if (status === 404) {
+    if (error.status === 404) {
       return 'Resource not found'
     }
 
-    return `Server error (${status}). Please try again`
+    return `Server error (${error.status}). Please try again`
   }
 
   // Generic fallback

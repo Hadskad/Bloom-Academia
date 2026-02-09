@@ -9,14 +9,18 @@
  * - Encouraging feedback for failing
  * - Per-question results with hints
  * - Navigation to next lesson (if passed) or lesson review (if failed)
+ * - Diagnostic breakdown for failed assessments (Criterion 5)
+ * - Targeted remediation generation
  *
  * Reference: Implementation_Roadmap_2.md - Day 25 (Frontend Integration)
+ * Criterion 5: ROADMAP_TO_100_PERCENT.md - Diagnostic Remediation UI
  */
 
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { CheckCircle, XCircle, ArrowRight, RotateCcw, BookOpen } from 'lucide-react'
+import { CheckCircle, XCircle, ArrowRight, RotateCcw, BookOpen, Target, AlertCircle } from 'lucide-react'
 
 interface PerQuestionResult {
   questionId: string
@@ -35,6 +39,24 @@ interface NextLesson {
   gradeLevel: number
 }
 
+interface FailedConcept {
+  concept: string
+  displayName: string
+  questionsFailedCount: number
+  totalQuestionsForConcept: number
+  failureRate: number
+  severity: 'critical' | 'moderate' | 'minor'
+  questionIds: string[]
+}
+
+interface DiagnosticResult {
+  failedConcepts: FailedConcept[]
+  remediationNeeded: boolean
+  recommendedActions: string[]
+  totalQuestionsAnalyzed: number
+  totalQuestionsFailed: number
+}
+
 interface AssessmentResultsProps {
   score: number
   passed: boolean
@@ -45,6 +67,9 @@ interface AssessmentResultsProps {
   lessonCompleted: boolean
   nextLesson: NextLesson | null
   lessonId: string
+  assessmentId: string
+  userId: string
+  userProfile?: any  // Optional: for remediation generation
   onRetry: () => void
   onContinue: () => void
 }
@@ -59,10 +84,18 @@ export function AssessmentResults({
   lessonCompleted,
   nextLesson,
   lessonId,
+  assessmentId,
+  userId,
+  userProfile,
   onRetry,
   onContinue,
 }: AssessmentResultsProps) {
   const router = useRouter()
+
+  // State for remediation generation
+  const [isGeneratingRemediation, setIsGeneratingRemediation] = useState(false)
+  const [diagnosis, setDiagnosis] = useState<DiagnosticResult | null>(null)
+  const [remediationError, setRemediationError] = useState<string | null>(null)
 
   const correctCount = perQuestionResults.filter((r) => r.isCorrect).length
   const totalQuestions = perQuestionResults.length
@@ -71,7 +104,7 @@ export function AssessmentResults({
     if (nextLesson) {
       router.push(`/learn/${nextLesson.id}`)
     } else {
-      router.push('/lessons')
+      router.push('/dashboard')
     }
   }
 
@@ -81,6 +114,60 @@ export function AssessmentResults({
 
   function handleBackToLessons() {
     router.push('/dashboard')
+  }
+
+  /**
+   * Generates targeted remediation content for failed assessment
+   * Calls /api/remediation/generate endpoint
+   */
+  async function handleStartTargetedPractice() {
+    setIsGeneratingRemediation(true)
+    setRemediationError(null)
+
+    try {
+      const response = await fetch('/api/remediation/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          assessmentId,
+          lessonId,
+          perQuestionResults,
+          userProfile: userProfile || {
+            id: userId,
+            learning_style: 'visual',
+            grade_level: 5,
+            age: 10
+          }
+        })
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to generate remediation')
+      }
+
+      const data = await response.json()
+
+      // Store diagnosis for display
+      setDiagnosis(data.diagnosis)
+
+      // Navigate to remediation session if plan was created
+      if (data.remediationPlanId) {
+        router.push(`/remediation/${data.remediationPlanId}`)
+      } else {
+        setRemediationError('No remediation plan was generated. Please review the full lesson.')
+      }
+    } catch (error) {
+      console.error('[AssessmentResults] Remediation generation failed:', error)
+      setRemediationError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to generate targeted practice. Please try reviewing the lesson.'
+      )
+    } finally {
+      setIsGeneratingRemediation(false)
+    }
   }
 
   return (
@@ -179,6 +266,108 @@ export function AssessmentResults({
             ))}
           </div>
         </div>
+
+        {/* Diagnostic Breakdown - Show for Failed Assessments (Criterion 5) */}
+        {!passed && diagnosis && diagnosis.remediationNeeded && (
+          <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <AlertCircle className="w-6 h-6 text-yellow-700" />
+              <h3 className="text-xl font-bold text-yellow-900">
+                📊 What You Need to Practice
+              </h3>
+            </div>
+
+            <p className="text-sm text-yellow-800 mb-4">
+              We've identified specific concepts that need more work. Focus on these areas instead of reviewing everything!
+            </p>
+
+            {/* Failed Concepts List */}
+            <div className="space-y-3 mb-4">
+              {diagnosis.failedConcepts.slice(0, 3).map((concept) => (
+                <div
+                  key={concept.concept}
+                  className={`p-4 rounded-lg border-2 ${
+                    concept.severity === 'critical'
+                      ? 'bg-red-50 border-red-300'
+                      : concept.severity === 'moderate'
+                      ? 'bg-orange-50 border-orange-300'
+                      : 'bg-blue-50 border-blue-300'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span
+                          className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                            concept.severity === 'critical'
+                              ? 'bg-red-200 text-red-900'
+                              : concept.severity === 'moderate'
+                              ? 'bg-orange-200 text-orange-900'
+                              : 'bg-blue-200 text-blue-900'
+                          }`}
+                        >
+                          {concept.severity}
+                        </span>
+                        <span className="font-semibold text-gray-800">
+                          {concept.displayName}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-700">
+                        {concept.questionsFailedCount} out of {concept.totalQuestionsForConcept} questions need review
+                        ({(concept.failureRate * 100).toFixed(0)}% failure rate)
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <div
+                        className={`text-2xl font-bold ${
+                          concept.severity === 'critical'
+                            ? 'text-red-600'
+                            : concept.severity === 'moderate'
+                            ? 'text-orange-600'
+                            : 'text-blue-600'
+                        }`}
+                      >
+                        {concept.severity === 'critical' ? '🔴' : concept.severity === 'moderate' ? '🟡' : '🔵'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Remediation Error Display */}
+            {remediationError && (
+              <div className="bg-red-50 border border-red-300 rounded-lg p-3 mb-4">
+                <p className="text-sm text-red-800">
+                  ⚠️ {remediationError}
+                </p>
+              </div>
+            )}
+
+            {/* Targeted Practice Button */}
+            <button
+              onClick={handleStartTargetedPractice}
+              disabled={isGeneratingRemediation}
+              className="w-full px-6 py-4 bg-yellow-500 hover:bg-yellow-600 disabled:bg-yellow-300 text-white font-semibold rounded-lg shadow-md transition-colors flex items-center justify-center gap-2"
+            >
+              {isGeneratingRemediation ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Generating Your Practice Plan...
+                </>
+              ) : (
+                <>
+                  <Target className="w-5 h-5" />
+                  🎯 Start Targeted Practice
+                </>
+              )}
+            </button>
+
+            <p className="text-xs text-yellow-700 text-center mt-2">
+              This will create a custom mini-lesson focused on your specific gaps
+            </p>
+          </div>
+        )}
 
         {/* Action Buttons */}
         {passed && lessonCompleted ? (

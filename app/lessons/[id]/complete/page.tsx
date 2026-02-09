@@ -104,7 +104,7 @@ export default function LessonCompletePage({
   }
 
   const goToLessons = () => {
-    router.push('/lessons')
+    router.push('/dashboard')
   }
 
   const reviewLesson = () => {

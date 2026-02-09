@@ -13,7 +13,7 @@
 
 import { GoogleGenAI } from '@google/genai'
 import { supabase } from '@/lib/db/supabase'
-import { getUserProfile, UserProfile } from './profile-manager'
+import { getUserProfile, UserProfile, invalidateCache as invalidateProfileCache } from './profile-manager'
 import { getSessionHistory, Interaction } from './session-manager'
 
 /**
@@ -123,6 +123,9 @@ Return ONLY valid JSON with these exact fields:
   if (error) {
     throw new Error(`Failed to update user profile: ${error.message}`)
   }
+
+  // Invalidate profile cache so next session loads fresh data
+  invalidateProfileCache(userId)
 
   return analysis
 }

@@ -17,19 +17,21 @@
  * Reference: Implementation_Roadmap.md - Day 14
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, use } from 'react'
 import { useRouter } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
-import { VoiceInput } from '@/components/VoiceInput'
+import { VoiceRecorder } from '@/components/VoiceRecorder'
+import { MediaUpload } from '@/components/MediaUpload'
 import { Toast, Banner } from '@/components/Toast'
 import { TeacherAvatar, getAgentInfo } from '@/components/TeacherAvatar'
 import { AssessmentMode } from '@/components/AssessmentMode'
 import { ArrowLeft, Loader2, Volume2 } from 'lucide-react'
 import { fetchWithRetry, getErrorMessage } from '@/lib/utils/retry'
 import { useOnlineStatus } from '@/lib/hooks/useOnlineStatus'
+import { useWalkthroughStore } from '@/lib/walkthrough/walkthrough-store'
 
 interface Lesson {
   id: string
@@ -47,18 +49,14 @@ interface LearnPageProps {
   }>
 }
 
-type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking'
+type VoiceState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking'
 
 export default function LearnPage({ params }: LearnPageProps) {
   const router = useRouter()
-  const [lessonId, setLessonId] = useState<string>('')
 
-  // Unwrap params in Next.js 15
-  useEffect(() => {
-    params.then((resolvedParams) => {
-      setLessonId(resolvedParams.lessonId)
-    })
-  }, [params])
+  // Unwrap params using React.use() - the recommended pattern for Next.js 15 client components
+  // Reference: https://nextjs.org/docs/app/building-your-application/upgrading/version-15
+  const { lessonId } = use(params)
 
   const [lesson, setLesson] = useState<Lesson | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -88,9 +86,27 @@ export default function LearnPage({ params }: LearnPageProps) {
   // Assessment mode state
   const [showAssessment, setShowAssessment] = useState(false)
 
-  // Load lesson and start session
+  // Walkthrough integration
+  const { triggerAction, clearTriggerAction } = useWalkthroughStore()
+
+  // Listen for walkthrough triggers
   useEffect(() => {
-    if (lessonId) {
+    if (!triggerAction) return
+
+    // Handle walkthrough action triggers
+    if (triggerAction === 'trigger-assessment') {
+      setShowAssessment(true)
+      clearTriggerAction()
+    }
+  }, [triggerAction, clearTriggerAction])
+
+  // Track if session has been started to prevent duplicate calls
+  const sessionStartedRef = useRef(false)
+
+  // Load lesson and start session - runs once when lessonId is available
+  useEffect(() => {
+    if (lessonId && !sessionStartedRef.current) {
+      sessionStartedRef.current = true
       loadLessonAndStartSession()
     }
   }, [lessonId])
@@ -159,7 +175,7 @@ export default function LearnPage({ params }: LearnPageProps) {
       const greetingMessage = `[AUTO_START] Begin the lesson by greeting the student warmly and introducing today's lesson: "${lesson.title}". Mention the learning objective briefly: "${lesson.learning_objective}". Keep it brief (2-3 sentences) and engaging, end by asking if ready to proceed.`
 
       const response = await fetchWithRetry(
-        '/api/teach/multi-ai',
+        '/api/teach/multi-ai-stream',
         {
           method: 'POST',
           headers: {
@@ -196,7 +212,7 @@ export default function LearnPage({ params }: LearnPageProps) {
       setVoiceState('speaking')
 
       try {
-        const audio = new Audio(`data:audio/mp3;base64,${data.teacherResponse.audioBase64}`)
+        const audio = new Audio(`data:audio/mpeg;base64,${data.teacherResponse.audioBase64}`)
         audioRef.current = audio
 
         audio.addEventListener('ended', () => {
@@ -228,9 +244,12 @@ export default function LearnPage({ params }: LearnPageProps) {
     }
   }
 
-  async function handleTranscript(text: string) {
+  async function handleAudioRecording(audioBase64: string, mimeType: string) {
     if (process.env.NODE_ENV === 'development') {
-      console.log('[Learn] Received transcript:', text)
+      console.log('[Learn] Received audio recording:', {
+        size: audioBase64.length,
+        mimeType
+      })
     }
 
     // Get userId from localStorage
@@ -262,10 +281,11 @@ export default function LearnPage({ params }: LearnPageProps) {
       setError(null)
       setToastMessage(null)
 
-      // Send to Multi-AI teacher endpoint with retry logic
-      // Day 16: Updated from /api/teach to /api/teach/multi-ai for specialist routing
+      // Send audio to Multi-AI teacher endpoint with retry logic
+      // Audio is sent directly to Gemini 3 Flash (no transcription needed)
+      // Reference: https://ai.google.dev/gemini-api/docs/audio
       const response = await fetchWithRetry(
-        '/api/teach/multi-ai',
+        '/api/teach/multi-ai-stream',
         {
           method: 'POST',
           headers: {
@@ -275,7 +295,8 @@ export default function LearnPage({ params }: LearnPageProps) {
             userId,
             sessionId,
             lessonId,
-            userMessage: text
+            audioBase64,
+            audioMimeType: mimeType
           }),
           signal: abortControllerRef.current.signal
         },
@@ -311,7 +332,7 @@ export default function LearnPage({ params }: LearnPageProps) {
 
       // Try to play audio, fallback to text-only if fails
       try {
-        const audio = new Audio(`data:audio/mp3;base64,${data.teacherResponse.audioBase64}`)
+        const audio = new Audio(`data:audio/mpeg;base64,${data.teacherResponse.audioBase64}`)
         audioRef.current = audio
 
         // Return to idle when audio finishes
@@ -366,12 +387,167 @@ export default function LearnPage({ params }: LearnPageProps) {
     }
   }
 
-  // Handle voice input state changes from VoiceInput component
-  function handleVoiceStateChange(state: 'idle' | 'listening') {
-    // Only update if we're in idle or listening states
+  /**
+   * Handle media (image/video) upload from MediaUpload component
+   * Sends media to the same teaching API with vision analysis support
+   */
+  async function handleMediaUpload(mediaBase64: string, mimeType: string, mediaType: 'image' | 'video') {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[Learn] Received media upload:', {
+        size: mediaBase64.length,
+        mimeType,
+        mediaType
+      })
+    }
+
+    // Get userId from localStorage
+    const userId = localStorage.getItem('userId')
+    if (!userId || !sessionId || !lessonId) {
+      setToastMessage('Missing required information. Please refresh the page.')
+      setVoiceState('idle')
+      return
+    }
+
+    // Check if online before making request
+    if (!isOnline) {
+      setToastMessage('You are offline. Please check your internet connection.')
+      setVoiceState('idle')
+      return
+    }
+
+    // Cancel any pending requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+
+    // Create new abort controller for this request
+    abortControllerRef.current = new AbortController()
+
+    try {
+      // Set state to thinking (AI processing)
+      setVoiceState('thinking')
+      setError(null)
+      setToastMessage(null)
+
+      // Send media to Multi-AI teacher endpoint with retry logic
+      // Media is sent directly to Gemini 3 Flash for vision analysis
+      // Reference: https://ai.google.dev/gemini-api/docs/image-understanding
+      // Reference: https://ai.google.dev/gemini-api/docs/video-understanding
+      const response = await fetchWithRetry(
+        '/api/teach/multi-ai-stream',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userId,
+            sessionId,
+            lessonId,
+            userMessage: `[MEDIA_UPLOAD] Student uploaded a ${mediaType}. Please analyze it and provide detailed feedback.`,
+            mediaBase64,
+            mediaMimeType: mimeType,
+            mediaType
+          }),
+          signal: abortControllerRef.current.signal
+        },
+        {
+          maxRetries: 3,
+          onRetry: (attempt, error) => {
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[Learn] Media upload retry attempt ${attempt}/3`, error)
+            }
+          }
+        }
+      )
+
+      const data = await response.json()
+
+      // Add new response to history
+      setTeacherResponses(prev => [...prev, data.teacherResponse])
+
+      // Track which agent responded
+      if (data.teacherResponse.agentName) {
+        setCurrentAgent(data.teacherResponse.agentName)
+      }
+
+      // Check if AI determined lesson is complete
+      if (data.lessonComplete === true) {
+        localStorage.setItem('aiTriggeredCompletion', 'true')
+      }
+
+      // Set state to speaking and play audio
+      setVoiceState('speaking')
+
+      // Try to play audio response
+      try {
+        const audio = new Audio(`data:audio/mpeg;base64,${data.teacherResponse.audioBase64}`)
+        audioRef.current = audio
+
+        audio.addEventListener('ended', () => {
+          setVoiceState('idle')
+          audioRef.current = null
+
+          // Check if AI triggered completion
+          const aiCompleted = localStorage.getItem('aiTriggeredCompletion')
+          if (aiCompleted === 'true') {
+            localStorage.removeItem('aiTriggeredCompletion')
+            setShowAssessment(true)
+          }
+        })
+
+        audio.addEventListener('error', (e) => {
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[Learn] Audio playback error:', e)
+          }
+          setVoiceState('idle')
+          setToastMessage('Audio playback failed, but you can read the response above.')
+          audioRef.current = null
+        })
+
+        await audio.play()
+      } catch (audioError) {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('[Learn] Audio play failed:', audioError)
+        }
+        setVoiceState('idle')
+        setToastMessage('Audio unavailable, but you can read the response above.')
+      }
+    } catch (err: any) {
+      // Don't show error if request was aborted
+      if (err.name === 'AbortError') {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[Learn] Media upload request aborted')
+        }
+        return
+      }
+
+      if (process.env.NODE_ENV === 'development') {
+        console.error('[Learn] Error uploading media:', err)
+      }
+
+      // Parse error and show user-friendly message
+      const errorMessage = getErrorMessage(err)
+      setToastMessage(errorMessage)
+      setVoiceState('idle')
+    }
+  }
+
+  // Handle voice recorder state changes from VoiceRecorder component
+  function handleVoiceStateChange(state: 'idle' | 'recording' | 'processing') {
+    console.log('[Learn] handleVoiceStateChange called with:', state, 'current voiceState:', voiceState)
+    // Map recorder states to voice states
+    const mappedState: VoiceState = state === 'recording' ? 'listening' :
+                                     state === 'processing' ? 'thinking' :
+                                     'idle'
+
+    // Only update if we're in idle, listening states
     // Don't interrupt thinking or speaking states
     if (voiceState === 'idle' || voiceState === 'listening') {
-      setVoiceState(state)
+      console.log('[Learn] Updating voiceState to:', mappedState)
+      setVoiceState(mappedState)
+    } else {
+      console.log('[Learn] Ignoring state change because current state is:', voiceState)
     }
   }
 
@@ -549,47 +725,57 @@ export default function LearnPage({ params }: LearnPageProps) {
         </div>
       </div>
 
-      {/* Bottom-Center Controls - Fixed positioning */}
-      <div className="fixed bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-white via-white to-transparent py-6">
-        <div className="flex flex-col items-center gap-3">
-          {/* Voice Indicator - Shows agent name when thinking/speaking */}
-          {voiceState !== 'idle' && (
-            <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-md border border-gray-200">
-              {voiceState === 'listening' && (
-                <>
-                  <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                  <span className="text-xs font-medium text-primary">Listening...</span>
-                </>
-              )}
-              {voiceState === 'thinking' && (
-                <>
-                  <Loader2 className="w-3 h-3 text-accent animate-spin" />
-                  <span className="text-xs font-medium text-accent">
-                    {getAgentInfo(currentAgent).name} is thinking...
-                  </span>
-                </>
-              )}
-              {voiceState === 'speaking' && (
-                <>
-                  <span className="text-base" role="img" aria-label="Speaking">
-                    {getAgentInfo(currentAgent).emoji}
-                  </span>
-                  <Volume2 className="w-3 h-3 text-success animate-pulse" />
-                  <span className="text-xs font-medium text-success">
-                    {getAgentInfo(currentAgent).name} is speaking...
-                  </span>
-                </>
-              )}
-            </div>
-          )}
+      {/* Mid-Right Controls - Fixed positioning */}
+      <div className="fixed right-6 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-3">
+        {/* Voice Indicator - Shows agent name when thinking/speaking */}
+        {voiceState !== 'idle' && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-full shadow-lg border border-gray-200">
+            {voiceState === 'connecting' && (
+              <>
+                <Loader2 className="w-3 h-3 text-gray-500 animate-spin" />
+                <span className="text-xs font-medium text-gray-600">Please wait...</span>
+              </>
+            )}
+            {voiceState === 'listening' && (
+              <>
+                <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+                <span className="text-xs font-medium text-primary">Listening...</span>
+              </>
+            )}
+            {voiceState === 'thinking' && (
+              <>
+                <Loader2 className="w-3 h-3 text-accent animate-spin" />
+                <span className="text-xs font-medium text-accent">
+                  {getAgentInfo(currentAgent).name} is thinking...
+                </span>
+              </>
+            )}
+            {voiceState === 'speaking' && (
+              <>
+                <span className="text-base" role="img" aria-label="Speaking">
+                  {getAgentInfo(currentAgent).emoji}
+                </span>
+                <Volume2 className="w-3 h-3 text-success animate-pulse" />
+                <span className="text-xs font-medium text-success">
+                  {getAgentInfo(currentAgent).name} is speaking...
+                </span>
+              </>
+            )}
+          </div>
+        )}
 
-          {/* Microphone Button */}
-          <VoiceInput
-            onTranscript={handleTranscript}
-            onStateChange={handleVoiceStateChange}
-            disabled={!sessionId || voiceState === 'thinking' || voiceState === 'speaking'}
-          />
-        </div>
+        {/* Microphone Button */}
+        <VoiceRecorder
+          onRecordingComplete={handleAudioRecording}
+          onStateChange={handleVoiceStateChange}
+          disabled={!sessionId || voiceState === 'thinking' || voiceState === 'speaking'}
+        />
+
+        {/* Media Upload Button */}
+        <MediaUpload
+          onMediaUpload={handleMediaUpload}
+          disabled={!sessionId || voiceState === 'thinking' || voiceState === 'speaking'}
+        />
       </div>
 
       {/* Session Info (for debugging) */}

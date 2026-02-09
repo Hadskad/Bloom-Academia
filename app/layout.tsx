@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { WalkthroughProvider } from "@/components/walkthrough";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -20,7 +21,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.className}>
       <body className="antialiased">
-        {children}
+        <WalkthroughProvider>
+          {children}
+        </WalkthroughProvider>
       </body>
     </html>
   );

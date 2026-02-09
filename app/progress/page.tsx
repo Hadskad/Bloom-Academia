@@ -94,7 +94,7 @@ export default function ProgressPage() {
   }
 
   function handleBackToLessons() {
-    router.push('/lessons')
+    router.push('/dashboard')
   }
 
   // Calculate summary statistics

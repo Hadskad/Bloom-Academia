@@ -21,6 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/db/supabase'
+import { warmupAllCaches } from '@/lib/ai/cache-manager'
 
 export async function POST(request: NextRequest) {
   try {
@@ -59,6 +60,14 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
+
+    // Warmup AI cache in background (non-blocking)
+    // This ensures the cache is ready before the first teaching request
+    // NOW INCLUDES LESSON CURRICULUM: Loads curriculum from lesson_curriculum table
+    warmupAllCaches(lessonId).catch((err) => {
+      console.error('[Session] Cache warmup failed (non-fatal):', err)
+      // Don't block session creation if cache fails
+    })
 
     // Return session ID and start time
     return NextResponse.json({

@@ -6,9 +6,11 @@
  *
  * Official docs: https://ai.google.dev/gemini-api/docs/gemini-3
  * Structured output: https://ai.google.dev/gemini-api/docs/structured-output
+ * Media resolution: https://ai.google.dev/gemini-api/docs/media-resolution
+ * SDK reference: https://googleapis.github.io/js-genai/
  */
 
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, MediaResolution } from '@google/genai';
 import { z } from 'zod';
 
 /**
@@ -52,23 +54,81 @@ export class GeminiClient {
    * Returns JSON with separate fields for audio (TTS), display text, and SVG.
    * This prevents SVG code from being read aloud by TTS.
    *
-   * @param params.userMessage - The student's question or message
+   * Supports both text and audio input (audio is processed directly by Gemini).
+   *
+   * @param params.userMessage - The student's question or message (optional if audio provided)
    * @param params.systemContext - System context with memory and personalization
+   * @param params.audioBase64 - Base64-encoded audio data (optional)
+   * @param params.audioMimeType - MIME type of audio (e.g., 'audio/webm', 'audio/mp3')
    * @returns Structured response with audioText, displayText, and optional SVG
    * @throws Error if API call fails or response doesn't match schema
+   *
+   * References:
+   * - Audio input: https://ai.google.dev/gemini-api/docs/audio
+   * - Inline data format: https://googleapis.github.io/js-genai/
    */
   async teach(params: {
-    userMessage: string;
+    userMessage?: string;
     systemContext: string;
+    audioBase64?: string;
+    audioMimeType?: string;
+    mediaBase64?: string;
+    mediaMimeType?: string;
+    mediaType?: 'image' | 'video';
   }): Promise<TeachingResponse> {
     try {
-      // Build the prompt with context and user message
-      const prompt = `${params.systemContext}\n\nStudent: ${params.userMessage}`;
+      // Validate input - must have at least one input type
+      if (!params.userMessage && !params.audioBase64 && !params.mediaBase64) {
+        throw new Error('At least one of userMessage, audioBase64, or mediaBase64 must be provided');
+      }
+
+      // Build contents array based on input type
+      // Reference: https://ai.google.dev/gemini-api/docs/audio
+      const contents: any[] = [];
+
+      // Add system context as text
+      contents.push({ text: params.systemContext });
+
+      // Add user input (media, audio, or text)
+      // Priority: media > audio > text
+      if (params.mediaBase64 && params.mediaMimeType && params.mediaType) {
+        // Media input mode (image or video)
+        contents.push({
+          text: `Student uploaded a ${params.mediaType}:`
+        });
+        contents.push({
+          inlineData: {
+            mimeType: params.mediaMimeType,
+            data: params.mediaBase64
+          }
+        });
+        // Add text context if provided
+        if (params.userMessage) {
+          contents.push({ text: params.userMessage });
+        }
+      } else if (params.audioBase64 && params.audioMimeType) {
+        // Audio input mode
+        contents.push({
+          text: 'Student (via voice):'
+        });
+        contents.push({
+          inlineData: {
+            mimeType: params.audioMimeType,
+            data: params.audioBase64
+          }
+        });
+      } else if (params.userMessage) {
+        // Text input mode
+        contents.push({
+          text: `Student: ${params.userMessage}`
+        });
+      }
 
       // Call Gemini 3 Flash with JSON mode enabled
+      // Reference: https://googleapis.github.io/js-genai/
       const response = await this.ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: prompt,
+        contents: contents,
         config: {
           // Enable JSON mode for structured output
           responseMimeType: 'application/json',
@@ -76,7 +136,12 @@ export class GeminiClient {
           // Thinking config for better reasoning
           thinkingConfig: {
             thinkingLevel: ThinkingLevel.MEDIUM
-          }
+          },
+          // Media resolution for high-fidelity image/video analysis
+          // Reference: https://ai.google.dev/gemini-api/docs/media-resolution
+          // HIGH provides optimal performance (1,120 tokens/image, ~$0.00056/image)
+          // Recommended by Google for most use cases over ULTRA_HIGH
+          mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH
         }
       });
 
@@ -125,12 +190,16 @@ export class GeminiClient {
    * Yields text chunks as they're generated, enabling sentence-level TTS processing.
    * Uses plain text format with markers instead of strict JSON schema for streaming compatibility.
    *
+   * Supports both text and audio input (audio is processed directly by Gemini).
+   *
    * Format markers:
    * - [SVG]...svg code...[/SVG] for visual diagrams
    * - [LESSON_COMPLETE] when student has mastered objectives
    *
-   * @param params.userMessage - The student's question or message
+   * @param params.userMessage - The student's question or message (optional if audio provided)
    * @param params.systemContext - System context with memory and personalization
+   * @param params.audioBase64 - Base64-encoded audio data (optional)
+   * @param params.audioMimeType - MIME type of audio (e.g., 'audio/webm', 'audio/mp3')
    * @yields Text chunks as they're generated by the model
    * @returns Promise that resolves to StreamingResult with full text and parsed metadata
    * @throws Error if API call fails or streaming is interrupted
@@ -138,16 +207,29 @@ export class GeminiClient {
    * References:
    * - Official streaming docs: https://googleapis.github.io/js-genai/
    * - GitHub example: https://github.com/googleapis/js-genai/blob/main/sdk-samples/generate_content_streaming.ts
+   * - Audio input: https://ai.google.dev/gemini-api/docs/audio
    */
   async *teachStreaming(params: {
-    userMessage: string;
+    userMessage?: string;
     systemContext: string;
+    audioBase64?: string;
+    audioMimeType?: string;
+    mediaBase64?: string;
+    mediaMimeType?: string;
+    mediaType?: 'image' | 'video';
   }): AsyncGenerator<string, StreamingResult, unknown> {
     try {
-      // Enhanced prompt with clear formatting instructions
-      const prompt = `${params.systemContext}
+      // Validate input - must have at least one input type
+      if (!params.userMessage && !params.audioBase64 && !params.mediaBase64) {
+        throw new Error('At least one of userMessage, audioBase64, or mediaBase64 must be provided');
+      }
 
-Student: ${params.userMessage}
+      // Build contents array based on input type
+      // Reference: https://ai.google.dev/gemini-api/docs/audio
+      const contents: any[] = [];
+
+      // Add system context with formatting instructions
+      const systemPrompt = `${params.systemContext}
 
 RESPONSE FORMAT INSTRUCTIONS:
 - Write naturally as if speaking directly to the student
@@ -159,16 +241,59 @@ RESPONSE FORMAT INSTRUCTIONS:
 
 IMPORTANT: Your response will be read aloud via text-to-speech, so write conversationally and naturally.`;
 
+      contents.push({ text: systemPrompt });
+
+      // Add user input (media, audio, or text)
+      // Priority: media > audio > text
+      if (params.mediaBase64 && params.mediaMimeType && params.mediaType) {
+        // Media input mode (image or video)
+        contents.push({
+          text: `\n\nStudent uploaded a ${params.mediaType}:`
+        });
+        contents.push({
+          inlineData: {
+            mimeType: params.mediaMimeType,
+            data: params.mediaBase64
+          }
+        });
+        // Add text context if provided
+        if (params.userMessage) {
+          contents.push({ text: params.userMessage });
+        }
+      } else if (params.audioBase64 && params.audioMimeType) {
+        // Audio input mode
+        contents.push({
+          text: '\n\nStudent (via voice):'
+        });
+        contents.push({
+          inlineData: {
+            mimeType: params.audioMimeType,
+            data: params.audioBase64
+          }
+        });
+      } else if (params.userMessage) {
+        // Text input mode
+        contents.push({
+          text: `\n\nStudent: ${params.userMessage}`
+        });
+      }
+
       // Call Gemini streaming API with LOW thinking level for faster responses
       // Reference: https://ai.google.dev/gemini-api/docs/gemini-3
+      // Reference: https://googleapis.github.io/js-genai/
       const stream = await this.ai.models.generateContentStream({
         model: 'gemini-3-flash-preview',
-        contents: prompt,
+        contents: contents,
         config: {
           // Use LOW thinking level for reduced latency
           thinkingConfig: {
             thinkingLevel: ThinkingLevel.LOW
-          }
+          },
+          // Media resolution for high-fidelity image/video analysis
+          // Reference: https://ai.google.dev/gemini-api/docs/media-resolution
+          // HIGH provides optimal performance (1,120 tokens/image, ~$0.00056/image)
+          // Recommended by Google for most use cases over ULTRA_HIGH
+          mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH
         }
       });
 

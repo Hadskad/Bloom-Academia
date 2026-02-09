@@ -28,6 +28,8 @@ import {
   hasReachedMaxAttempts,
 } from '@/lib/assessment/attempt-saver'
 import { getNextLesson } from '@/lib/curriculum/next-lesson'
+// Criterion 3: Record evidence from assessment answers
+import { recordMasteryEvidence } from '@/lib/kernel/mastery-detector'
 
 /**
  * Request body interface
@@ -154,6 +156,37 @@ export async function POST(request: NextRequest) {
     const gradingResult = await gradeAssessment(assessment.questions, body.answers)
 
     const passed = gradingResult.score >= assessment.passing_score
+
+    // Criterion 3: Record evidence from each assessment answer
+    // Assessment answers are high-confidence evidence (AI grader already evaluated them)
+    // Record asynchronously to not block response
+    for (const result of gradingResult.perQuestionResults) {
+      // Find the student's original answer for this question
+      const studentAnswer = body.answers.find(a => a.questionId === result.questionId)
+      // Find the question text for context
+      const question = assessment.questions.find(q => q.id === result.questionId)
+
+      // Nuanced quality scoring (matches evidence-extractor 0-100 scale):
+      // - Correct: 100
+      // - Partial credit: proportional (e.g., 0.5 → 50)
+      // - Incorrect: 0
+      const qualityScore = result.isCorrect
+        ? 100
+        : Math.round(result.partialCredit * 100)
+
+      recordMasteryEvidence(
+        body.userId,
+        body.lessonId,
+        body.sessionId,
+        result.isCorrect ? 'correct_answer' : 'incorrect_answer',
+        studentAnswer?.userAnswer || '',
+        {
+          quality_score: qualityScore,
+          confidence: 1.0,  // High confidence - AI grader already verified
+          context: question?.text || ''
+        }
+      ).catch((err) => console.error('[Assessment Grade] Failed to record evidence for question:', err));
+    }
 
     // Generate overall feedback based on performance
     let overallFeedback = ''

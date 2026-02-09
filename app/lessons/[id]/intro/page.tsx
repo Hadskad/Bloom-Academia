@@ -128,7 +128,7 @@ export default function LessonIntroPage({
   }
 
   const goBack = () => {
-    router.push('/lessons')
+    router.push('/dashboard')
   }
 
   // Get difficulty badge styling

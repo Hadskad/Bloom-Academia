@@ -52,8 +52,10 @@ const MAX_CACHE_SIZE = 100;
 
 /**
  * Clear cache entry for a specific user (called on updates)
+ *
+ * EXPORTED for use by profile-enricher.ts (Criterion 4: Real-time updates)
  */
-function invalidateCache(userId: string): void {
+export function invalidateCache(userId: string): void {
   profileCache.delete(userId);
 }
 

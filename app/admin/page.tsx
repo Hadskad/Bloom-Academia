@@ -21,8 +21,9 @@
  */
 
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Users, UserCheck, BookOpen, Award, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Users, UserCheck, BookOpen, Award, RefreshCw, Plus, Settings } from 'lucide-react'
 import Link from 'next/link'
+import { Button } from '@/components/ui/button'
 import { AgentStats } from '@/components/AgentStats'
 import { StudentList } from '@/components/admin/StudentList'
 import { StudentDetail } from '@/components/admin/StudentDetail'
@@ -134,14 +135,28 @@ export default function AdminDashboard() {
               Monitor school performance and student progress
             </p>
           </div>
-          <button
-            onClick={fetchStats}
-            disabled={isLoading}
-            className="flex items-center gap-2 px-4 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            <span className="text-sm font-medium">Refresh</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <Link href="/admin/curriculum-builder/topic">
+              <Button>
+                <Plus className="w-4 h-4 mr-2" />
+                Create New Lesson
+              </Button>
+            </Link>
+            <Link href="/admin/curriculum-builder">
+              <Button variant="outline">
+                <Settings className="w-4 h-4 mr-2" />
+                Curriculum Settings
+              </Button>
+            </Link>
+            <button
+              onClick={fetchStats}
+              disabled={isLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              <span className="text-sm font-medium">Refresh</span>
+            </button>
+          </div>
         </div>
 
         {/* KPI Cards Section */}

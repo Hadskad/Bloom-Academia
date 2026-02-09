@@ -58,20 +58,67 @@ export interface Assessment {
 export async function getAssessmentForLesson(
   lessonId: string
 ): Promise<Assessment> {
+  const queryId = `query_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  const startTime = Date.now()
+
+  console.log(`[${queryId}] 🎯 Fetching assessment for lesson: ${lessonId}`)
+
   try {
+    console.log(`[${queryId}] 📡 Querying Supabase assessments table...`)
     const { data, error } = await supabase
       .from('assessments')
       .select('*')
       .eq('lesson_id', lessonId)
       .single()
 
+    const queryDuration = Date.now() - startTime
+
     if (error) {
-      console.error('Database error fetching assessment:', error)
+      console.error(`[${queryId}] ❌ SUPABASE_ERROR (${queryDuration}ms):`, {
+        errorCode: error.code,
+        errorMessage: error.message,
+        errorDetails: error.details,
+        errorHint: error.hint,
+        lessonId,
+        timestamp: new Date().toISOString()
+      })
+
+      // Log specific error scenarios
+      if (error.code === 'PGRST116') {
+        console.error(`[${queryId}] 🔍 No rows found - assessment doesn't exist for lesson ${lessonId}`)
+      } else if (error.code === '42P01') {
+        console.error(`[${queryId}] 🔍 Table 'assessments' does not exist - migration may not have run`)
+      } else if (error.message.includes('JWT')) {
+        console.error(`[${queryId}] 🔍 Authentication issue - check SUPABASE_SERVICE_ROLE_KEY`)
+      }
+
       throw new Error(`Failed to fetch assessment: ${error.message}`)
     }
 
     if (!data) {
+      console.error(`[${queryId}] ❌ NO_DATA_RETURNED (${queryDuration}ms)`, {
+        lessonId,
+        note: 'Query succeeded but returned null'
+      })
       throw new Error(`No assessment found for lesson: ${lessonId}`)
+    }
+
+    console.log(`[${queryId}] ✅ SUCCESS (${queryDuration}ms):`, {
+      assessmentId: data.id,
+      title: data.title,
+      questionCount: Array.isArray(data.questions) ? data.questions.length : 'Invalid format',
+      hasQuestions: !!data.questions,
+      questionsType: typeof data.questions,
+      lessonId: data.lesson_id
+    })
+
+    // Validate questions structure
+    if (!Array.isArray(data.questions)) {
+      console.error(`[${queryId}] ⚠️ INVALID_QUESTIONS_FORMAT:`, {
+        questionsType: typeof data.questions,
+        questionsValue: data.questions
+      })
+      throw new Error('Assessment questions are not in valid array format')
     }
 
     // Parse JSONB questions field (Supabase returns it as parsed JSON already)
@@ -89,6 +136,14 @@ export async function getAssessmentForLesson(
       updated_at: data.updated_at,
     }
   } catch (error) {
+    const totalDuration = Date.now() - startTime
+    console.error(`[${queryId}] ❌ EXCEPTION_CAUGHT (${totalDuration}ms):`, {
+      errorType: error?.constructor?.name,
+      errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      lessonId
+    })
+
     // Re-throw with context
     if (error instanceof Error) {
       throw error
