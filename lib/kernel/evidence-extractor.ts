@@ -83,18 +83,6 @@ export async function extractEvidenceQuality(
 
     const ai = new GoogleGenAI({ apiKey });
 
-    // Use Gemini 3 Flash for fast evidence extraction
-    // Reference: https://ai.google.dev/gemini-api/docs/structured-output
-    const model = ai.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      config: {
-        // Request JSON-structured output matching our schema
-        // Reference: https://blog.google/technology/developers/gemini-api-structured-outputs/
-        responseMimeType: 'application/json',
-        responseSchema: evidenceQualitySchema
-      }
-    });
-
     // Construct analysis prompt
     const prompt = `You are analyzing a student's learning evidence during a lesson.
 
@@ -124,12 +112,26 @@ CONFIDENCE (0-1): How certain are you of this classification?
 
 Return JSON with: evidenceType, qualityScore, confidence, reasoning`;
 
-    // Generate structured response
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+    // Use Gemini 3 Flash for fast evidence extraction
+    // Pattern: ai.models.generateContent() per @google/genai v1.35.0
+    // Reference: https://ai.google.dev/gemini-api/docs/structured-output
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: z.toJSONSchema(evidenceQualitySchema),
+      }
+    });
+
+    const responseText = response.text;
+
+    if (!responseText) {
+      throw new Error('No response from Gemini evidence extraction');
+    }
 
     // Parse JSON response
-    // The SDK with responseSchema guarantees JSON output
+    // The SDK with responseJsonSchema guarantees JSON output
     const analysis = JSON.parse(responseText) as EvidenceQuality;
 
     console.log('[Evidence Extraction]', {

@@ -142,17 +142,6 @@ export async function generateRemediationLesson(
   // Reference: https://ai.google.dev/gemini-api/docs/quickstart?lang=node
   const ai = new GoogleGenAI({ apiKey });
 
-  // Get generative model with structured output configuration
-  // Using Gemini 3 Flash for fast content generation
-  // Reference: https://ai.google.dev/gemini-api/docs/structured-output
-  const model = ai.getGenerativeModel({
-    model: 'gemini-3-flash-preview',
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: remediationLessonSchema
-    }
-  });
-
   // Build adaptive prompt based on student profile
   const prompt = buildRemediationPrompt(
     concept,
@@ -170,12 +159,26 @@ export async function generateRemediationLesson(
       learningStyle: studentProfile.learning_style
     });
 
-    // Generate content
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+    // Generate content using Gemini 3 Flash with structured output
+    // Pattern: ai.models.generateContent() per @google/genai v1.35.0
+    // Reference: https://ai.google.dev/gemini-api/docs/structured-output
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: remediationLessonSchema,
+      }
+    });
+
+    const responseText = response.text;
+
+    if (!responseText) {
+      throw new Error('No response from Gemini content generation');
+    }
 
     // Parse JSON response
-    // The SDK with responseSchema guarantees valid JSON output
+    // The SDK with responseJsonSchema guarantees valid JSON output
     const lesson = JSON.parse(responseText) as RemediationLesson;
 
     console.log('[content-generator] Successfully generated:', {
