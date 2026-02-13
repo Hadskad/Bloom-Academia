@@ -1,6 +1,6 @@
 # Bloom Academia - Architecture Overview
 
-> **Comprehensive AI-Powered Personalized Learning Platform**
+
 > **Last Updated**: February 8, 2026
 
 ---

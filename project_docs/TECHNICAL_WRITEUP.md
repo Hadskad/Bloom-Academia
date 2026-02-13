@@ -12,9 +12,9 @@ Over 70% of children globally cannot read or perform basic mathematics by age 10
 **Bloom's Solution**: Mastery-based progression enforced by deterministic rules. Students cannot advance until objective evidence thresholds are met: minimum 3 correct answers, 70+ quality score on explanations, <30% struggle ratio, and verified application of knowledge. The system tracks 5 evidence types (correct answers, explanations, self-corrections, applications, struggles) and applies teacher-configured rules with 100% confidence—no AI opinions allowed.
 
 ### 1.2 Teacher Shortage & Quality Variance
-The global teacher shortage exceeds 69 million positions. Where teachers exist, quality varies drastically due to training differences, classroom overcrowding (30-60 students per teacher), and burnout from unsustainable workloads.
+The global teacher shortage exceeds 40 million positions. Where teachers exist, quality varies drastically due to training differences, classroom overcrowding (30-60 students per teacher), and burnout from unsustainable workloads.
 
-**Bloom's Solution**: One AI teacher per student with unlimited availability. Consistent, curriculum-aligned instruction delivered through specialized agents with domain expertise (Math specialist uses HIGH reasoning for multi-step proofs, History specialist uses Google Search grounding for factual accuracy). System scales to millions of concurrent students at near-zero marginal cost.
+**Bloom's Solution**: Multiple AI teachers per student with unlimited availability. Consistent, curriculum-aligned instruction delivered through specialized agents with domain expertise (Math specialist uses HIGH reasoning for multi-step proofs, History specialist uses Google Search grounding for factual accuracy). System scales to millions of concurrent students at near-zero marginal cost.
 
 ### 1.3 One-Size-Fits-All Classrooms
 Traditional education teaches at a fixed pace, leaving fast learners bored and struggling learners behind. This exists due to:
@@ -32,7 +32,7 @@ Research proves 1-on-1 tutoring outperforms classroom instruction by 2 standard 
 - Cannot scale linearly (each new student requires another tutor)
 - Inaccessible to 90% of global students due to cost/geography
 
-**Bloom's Solution**: AI-powered replication of 1-on-1 tutoring with voice-based natural conversation. Progressive streaming achieves sub-2.5-second latency (context building: 50-150ms, routing: 200-400ms, AI response: 1,000-1,400ms, TTS: 300-600ms). Cost scales sub-linearly through caching (agent prompts pre-cached, user profiles cached 5 minutes), fast-path routing (skips coordinator when specialist active), and serverless architecture.
+**Bloom's Solution**: AI-powered replication of 1-on-1 tutoring with voice-based natural conversation. Cost scales sub-linearly through caching (agent prompts pre-cached, user profiles cached 5 minutes), fast-path routing (skips coordinator when specialist active), and serverless architecture.
 
 ### 1.5 Hallucinations & Trust Crisis in AI Education
 Existing LLM tutors suffer fatal flaws:

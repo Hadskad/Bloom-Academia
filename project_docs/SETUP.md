@@ -36,12 +36,6 @@ Then fill in your API keys in `.env.local`:
    - `anon` `public` key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `service_role` `secret` key → `SUPABASE_SERVICE_ROLE_KEY`
 
-### Soniox API Key
-1. Go to [Soniox](https://soniox.com)
-2. Sign up for an account
-3. Navigate to API Keys section
-4. Create a new API key
-5. Copy and paste into `SONIOX_API_KEY`
 
 ### Google Cloud Text-to-Speech
 1. Go to [Google Cloud Console](https://console.cloud.google.com)

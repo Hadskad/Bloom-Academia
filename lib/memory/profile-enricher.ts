@@ -55,7 +55,7 @@ async function analyzeEvidencePatterns(
     .from('mastery_evidence')
     .select('evidence_type, metadata')
     .eq('session_id', sessionId)
-    .order('created_at', { ascending: false })
+    .order('recorded_at', { ascending: false })
     .limit(limit)
 
   if (error) {

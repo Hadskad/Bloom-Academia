@@ -15,7 +15,7 @@ export function MultiAgentDiagram() {
         Multi-AI Agent Architecture
       </text>
       <text x="400" y="55" textAnchor="middle" fill="#64748b" fontSize="12">
-        7 Specialized Agents with Smart Routing
+        8 Specialized Agents with Smart Routing + Quality Control
       </text>
 
       {/* Student Input */}
@@ -92,6 +92,27 @@ export function MultiAgentDiagram() {
         <text x="50" y="55" textAnchor="middle" fill="#0d9488" fontSize="9">& emotional support</text>
       </g>
 
+      {/* Validator Agent - Quality Control Oversight */}
+      <g transform="translate(640, 230)">
+        {/* Glow effect for premium feel */}
+        <rect width="130" height="95" rx="10" fill="url(#validatorGradient)" stroke="#f59e0b" strokeWidth="3" filter="url(#glow)" />
+
+        {/* Header with shield icon */}
+        <text x="65" y="22" textAnchor="middle" fill="#78350f" fontSize="12" fontWeight="bold">🛡️ Validator</text>
+
+        {/* Model badge */}
+        <rect x="20" y="28" width="90" height="16" rx="8" fill="#fbbf24" />
+        <text x="65" y="39" textAnchor="middle" fill="#78350f" fontSize="8" fontWeight="600">Gemini 3 Pro</text>
+
+        {/* Description */}
+        <text x="65" y="54" textAnchor="middle" fill="#92400e" fontSize="9">Background quality</text>
+        <text x="65" y="66" textAnchor="middle" fill="#92400e" fontSize="9">control (5 checks)</text>
+
+        {/* Deferred correction note */}
+        <text x="65" y="82" textAnchor="middle" fill="#d97706" fontSize="7.5">Deferred self-correction</text>
+        <text x="65" y="91" textAnchor="middle" fill="#d97706" fontSize="7.5">on rejection</text>
+      </g>
+
       {/* Connection Lines from Coordinator to Specialists */}
       <line x1="335" y1="220" x2="400" y2="100" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4,2" />
       <line x1="335" y1="220" x2="510" y2="100" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4,2" />
@@ -101,14 +122,30 @@ export function MultiAgentDiagram() {
       <line x1="335" y1="270" x2="400" y2="280" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4,2" />
       <line x1="335" y1="270" x2="520" y2="280" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4,2" />
 
+      {/* Validator Connection Lines - Background validation from teaching specialists */}
+      {/* Math → Validator */}
+      <line x1="490" y1="100" x2="640" y2="260" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
+      {/* Science → Validator */}
+      <line x1="600" y1="100" x2="665" y2="230" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
+      {/* English → Validator */}
+      <line x1="710" y1="105" x2="705" y2="230" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
+      {/* History → Validator */}
+      <line x1="490" y1="180" x2="640" y2="250" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
+      {/* Art → Validator */}
+      <line x1="600" y1="180" x2="655" y2="230" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3,3" opacity="0.6" />
+
+      {/* Background validation label */}
+      <text x="595" y="175" fill="#d97706" fontSize="8" fontStyle="italic">async validation</text>
+
       {/* Smart Routing Logic Box */}
-      <g transform="translate(50, 380)">
-        <rect width="700" height="100" rx="8" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1" />
-        <text x="350" y="25" textAnchor="middle" fill="#334155" fontSize="12" fontWeight="bold">Smart Routing Algorithm</text>
+      <g transform="translate(20, 370)">
+        <rect width="760" height="115" rx="8" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1" />
+        <text x="380" y="25" textAnchor="middle" fill="#334155" fontSize="12" fontWeight="bold">Smart Routing Algorithm + Quality Control</text>
 
         <text x="30" y="50" fill="#475569" fontSize="10">1️⃣ Check if specialist already active → Fast path (direct to specialist)</text>
         <text x="30" y="68" fill="#475569" fontSize="10">2️⃣ If lesson complete → Auto-route to Assessor for evaluation</text>
         <text x="30" y="86" fill="#475569" fontSize="10">3️⃣ If specialist requests handoff → Route to Motivator for encouragement</text>
+        <text x="30" y="104" fill="#d97706" fontSize="10" fontWeight="600">4️⃣ After specialist response → Validator runs background check (5 validations, deferred self-correction)</text>
       </g>
 
       {/* Arrow Marker Definition */}
@@ -116,6 +153,21 @@ export function MultiAgentDiagram() {
         <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
           <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" />
         </marker>
+
+        {/* Validator gradient for premium look */}
+        <linearGradient id="validatorGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" style={{stopColor: '#fef3c7', stopOpacity: 1}} />
+          <stop offset="100%" style={{stopColor: '#fde68a', stopOpacity: 1}} />
+        </linearGradient>
+
+        {/* Glow effect for validator */}
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+          <feMerge>
+            <feMergeNode in="coloredBlur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
       </defs>
     </svg>
   );

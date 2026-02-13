@@ -8,6 +8,7 @@ export type WalkthroughStep =
   | 'voice-pipeline'
   | 'disability-support'
   | 'voice-learning'
+  | 'curriculum-builder'
   | 'assessment-mode'
   | 'assessment-results'
   | 'lesson-complete'
@@ -42,6 +43,7 @@ export const WALKTHROUGH_STEPS: WalkthroughStep[] = [
   'voice-pipeline',
   'disability-support',
   'voice-learning',
+  'curriculum-builder',
   'assessment-mode',
   'assessment-results',
   'lesson-complete',
@@ -57,6 +59,7 @@ export const STEP_ROUTES: Record<WalkthroughStep, string> = {
   'voice-pipeline': '/',
   'disability-support': '/',
   'voice-learning': '/learn/0d27645e-54b0-418f-b62f-e848087d7db9',
+  'curriculum-builder': '/admin/curriculum-builder',
   'assessment-mode': '/learn/0d27645e-54b0-418f-b62f-e848087d7db9',
   'assessment-results': '/learn/0d27645e-54b0-418f-b62f-e848087d7db9',
   'lesson-complete': '/lessons/0d27645e-54b0-418f-b62f-e848087d7db9/complete',
@@ -72,6 +75,7 @@ export const STEP_TITLES: Record<WalkthroughStep, string> = {
   'voice-pipeline': 'Voice Pipeline Architecture',
   'disability-support': 'Disability Support Plan',
   'voice-learning': 'Voice Learning Interface',
+  'curriculum-builder': 'Curriculum Builder',
   'assessment-mode': 'Assessment Mode',
   'assessment-results': 'Assessment Results',
   'lesson-complete': 'Lesson Completion',

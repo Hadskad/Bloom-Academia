@@ -285,52 +285,85 @@ Ensure all functionality is keyboard-accessible:
  
 7. CODING BEST PRACTICES
 7.1 Component Structure
-// components/Button.tsx
-import { ButtonHTMLAttributes, forwardRef } from 'react'
-import { cn } from '@/lib/utils'
+// Example from actual codebase: components/ui/button.tsx (shadcn)
+import * as React from "react"
+import { Slot } from "@radix-ui/react-slot"
+import { cva, type VariantProps } from "class-variance-authority"
+import { cn } from "@/lib/utils"
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'outline'
-  size?: 'sm' | 'md' | 'lg'
-}
-
-const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'primary', size = 'md', ...props }, ref) => {
-    return (
-      <button
-        ref={ref}
-        className={cn(
-          'rounded-md font-semibold transition-colors',
-          variant === 'primary' && 'bg-primary text-white hover:bg-primary/90',
-          size === 'md' && 'h-10 px-4',
-          className
-        )}
-        {...props}
-      />
-    )
+const buttonVariants = cva(
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-10 px-4 py-2",
+        sm: "h-9 rounded-md px-3",
+        lg: "h-11 rounded-md px-8",
+        icon: "h-10 w-10",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
   }
 )
 
-7.2 File Organization
+7.2 File Organization (Actual Structure)
 app/
-├── (routes)/
-│   ├── page.tsx              # Landing page
-│   ├── learn/page.tsx        # Learning interface
-│   └── lessons/page.tsx      # Lesson selection
+├── page.tsx                  # Landing page
+├── welcome/page.tsx          # Onboarding
+├── lessons/page.tsx          # Lesson selection
+├── lessons/[id]/
+│   ├── intro/page.tsx        # Lesson preview
+│   └── complete/page.tsx     # Lesson completion
+├── learn/[lessonId]/page.tsx # Main learning interface
+├── dashboard/page.tsx        # Student dashboard
+├── progress/page.tsx         # Progress tracking
+├── remediation/[planId]/page.tsx # Adaptive remediation
+├── admin/                    # Admin panels
 ├── api/                      # API routes
+│   ├── teach/
+│   │   └── multi-ai-stream/route.ts # Main teaching endpoint
+│   ├── stt/temp-key/route.ts # Soniox API key
+│   └── tts/synthesize/route.ts # Google TTS
 ├── layout.tsx                # Root layout
 └── globals.css               # Global styles
 
 components/
 ├── ui/                       # shadcn components
-├── Whiteboard.tsx
-├── VoiceIndicator.tsx
-└── LessonCard.tsx
+├── teaching/
+│   ├── VoiceInput.tsx        # Soniox integration
+│   ├── TeacherResponse.tsx   # Audio + SVG display
+│   └── Whiteboard.tsx        # SVG rendering
+├── lessons/
+│   └── LessonCard.tsx
+└── dashboard/
+    └── ProgressChart.tsx
 
 lib/
-├── utils.ts                  # Utility functions
-├── supabase.ts               # Supabase client
-└── store.ts                  # Zustand store
+├── ai/
+│   ├── agent-manager.ts      # Multi-agent system
+│   ├── adaptive-directives.ts # Learning style adaptation
+│   └── cache-manager.ts      # Gemini context caching
+├── kernel/
+│   ├── mastery-detector.ts   # Rules-based mastery
+│   └── evidence-extractor.ts # Learning analytics
+├── memory/
+│   ├── profile-manager.ts    # User profiles
+│   ├── session-manager.ts    # Session history
+│   └── profile-enricher.ts   # Real-time updates
+├── tts/google-tts.ts         # Google Cloud TTS
+├── db/supabase.ts            # Supabase client
+└── utils.ts                  # Utility functions
 
 7.3 Naming Conventions
 •	Components: PascalCase (Button.tsx, LessonCard.tsx)
@@ -374,25 +407,49 @@ Before deploying, ensure:
 
 
 WHITEBOARD SYSTEM IMPLEMENTATION
-Whiteboard Animation & Rendering
+
+**Actual Implementation:**
+- **SVG Generation**: Gemini 3 Flash generates SVG code on-the-fly in teaching responses
+- **Rendering**: Instant appearance when audio playback starts (no progressive animations)
+- **Format**: Valid SVG XML extracted from structured response (Zod schema validation)
+- **Display**: Simple innerHTML rendering with error handling
+
 Animation Approach: Instant Appearance
-For MVP simplicity, SVGs appear instantly when rendered. No progressive animations or stroke effects.
+For production simplicity, SVGs appear instantly when rendered. No progressive animations.
+
 Implementation:
-typescriptfunction renderWhiteboard(svgCode: string | null) {
+```typescript
+// Actual code from TeacherResponse component
+function renderWhiteboard(svgCode: string | null) {
   if (!svgCode) {
     whiteboardContainer.innerHTML = ''
     return
   }
-  
-  // Simple instant render
-  whiteboardContainer.innerHTML = svgCode
-}
-Rationale:
 
-Zero complexity, zero bugs
-Fast and reliable
-Students focus on content, not animations
-Can add polish later if time permits
+  try {
+    // Validate SVG before rendering
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(svgCode, 'image/svg+xml')
+    const parseError = doc.querySelector('parsererror')
+
+    if (parseError) {
+      console.error('Invalid SVG:', svgCode)
+      return
+    }
+
+    // Instant render synchronized with audio
+    whiteboardContainer.innerHTML = svgCode
+  } catch (error) {
+    console.error('SVG render error:', error)
+  }
+}
+```
+
+Rationale:
+- Zero complexity, zero bugs
+- Fast and reliable (validated in production)
+- Students focus on content, not animations
+- Gemini generates contextually perfect diagrams
 
 
 SVG Rendering with Audio Synchronization

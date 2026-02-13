@@ -46,21 +46,25 @@ Interactive Whiteboard
 •	Synchronized animations with voice narration
 •	Mathematical equations, diagrams, and visual aids
  
-4. TECHNICAL ARCHITECTURE
-4.1 Technology Stack
-Layer	Technology
-Frontend	Next.js 14+ with React 18
-  Tailwind CSS + shadcn/ui 
-  Fabric.js or Konva (whiteboard) 
- Framer Motion (animations)
-AI Model	Gemini 3 Flash
-Database	Supabase (PostgreSQL + Auth)
-Hosting	Vercel (automatic deployments)
-Backend	•  Next.js API Routes 
-•  Supabase 
-•  WebSocket connections (for Gemini Live API streaming)
-STT	Soniox WebSocket for live transcription
-TTS	Google cloud TTS Neural2 Streaming
+4. TECHNICAL ARCHITECTURE (IMPLEMENTED)
+4.1 Technology Stack - Final
+Layer	Technology	Status
+Frontend	Next.js 15 with React 18	✅ Deployed
+Styling	Tailwind CSS + shadcn/ui	✅ Complete
+Whiteboard	SVG rendering (no canvas library)	✅ Simplified
+Animation	Framer Motion	✅ Complete
+AI Model	Gemini 3 Flash (gemini-3-flash-preview)	✅ Multi-agent
+AI Orchestration	9-agent system (agent-manager.ts)	✅ Production-ready
+Database	Supabase (PostgreSQL + Auth)	✅ Complete schema
+Hosting	Vercel (serverless)	✅ Auto-deploy
+Backend	Next.js API Routes (serverless functions)	✅ Complete
+STT	Soniox WebSocket (@soniox/speech-to-text-web)	✅ Real-time
+TTS	Google Cloud TTS Neural2 Streaming	✅ Per-agent voices
+Memory	3-layer system (profile + session + enrichment)	✅ Real-time updates
+Analytics	Evidence extraction + mastery detection	✅ Rules-based
+Validation	Validator agent with regeneration loop	✅ Hallucination prevention
+Caching	Gemini context caching (75% cost reduction)	✅ 1-hour TTL
+Grounding	Google Search (History/Science only)	✅ Source citations
 	
 	
 
@@ -248,24 +252,53 @@ Foundation/Grant Funded:
 5.	Cost Efficiency: Fraction of traditional school operational costs
 6.	Scalability: Unlimited students with consistent quality
  
-9. AI INTEGRATION SPECIFICATIONS
-9.1 Gemini 3 Pro Configuration
-Model: gemini-3-pro
-API: Gemini Live API (Native Audio)
-Connection: WebSocket bidirectional streaming
-Latency Target: 1-3 seconds response time
+9. AI INTEGRATION SPECIFICATIONS (FINAL IMPLEMENTATION)
+9.1 Multi-Agent System Configuration
+**Model**: gemini-3-flash-preview (NO Live API - text-only)
+**Architecture**: 9 specialized agents with distinct roles
+**Connection**: REST API via @google/genai SDK (not WebSocket)
+**Latency**: 2-4 seconds (Soniox + Gemini + TTS pipeline)
 
-9.2 System Prompt Architecture
-Core Identity:
-"You are an expert mathematics teacher conducting a voice-based lesson with visual aids. Your goal is to help students truly understand concepts, not just memorize. You are patient, encouraging, and adaptive to each student's learning style."
+**Agent Roster:**
+1. **Coordinator** (thinking: LOW) - Routes to specialists
+2. **Math Specialist** (thinking: HIGH) - Precise logical reasoning
+3. **Science Specialist** (thinking: MEDIUM, Google Search) - Inquiry-based learning
+4. **English Specialist** (thinking: HIGH) - Nuanced language analysis
+5. **History Specialist** (thinking: HIGH, Google Search) - Historical context
+6. **Art Specialist** (thinking: LOW) - Creative encouragement
+7. **Assessor** (thinking: MEDIUM) - Fair mastery evaluation
+8. **Motivator** (thinking: LOW) - Emotional support
+9. **Validator** (thinking: HIGH, gemini-3-pro) - Hallucination prevention
 
-Teaching Principles:
-•	Socratic Method: Ask guiding questions, don't just tell
-•	Multiple Explanations: Try different approaches until understanding clicks
-•	Visual Reinforcement: Whiteboard should support and clarify speech
-•	Patient Pacing: Never move on until student demonstrates understanding
-•	Mistake Analysis: When wrong, explain WHY, not just correct
-•	Encouragement: Build confidence through positive reinforcement
+**Voice Assignment**: Each agent has distinct Google Cloud TTS Neural2 voice
+
+9.2 System Prompt Architecture (DRY Architecture)
+**Base Prompt** (shared by all agents):
+```
+CORE IDENTITY:
+You are a specialist AI teacher in the Bloom Academia multi-agent teaching system.
+You work collaboratively with other AI agents to provide personalized education.
+
+TEACHING PRINCIPLES:
+• Socratic Method: Guide with questions, don't just tell
+• Multiple Explanations: Try different approaches until understanding clicks
+• Visual Reinforcement: Generate SVG diagrams when helpful
+• Patient Pacing: Never move on until student demonstrates understanding
+• Mistake Analysis: Explain WHY, not just correct
+• Encouragement: Build confidence through positive reinforcement
+• Adaptive Teaching: Adjust based on student's learning style and mastery level
+```
+
+**Agent-Specific Prompts** (seed_ai_agents_v2.sql):
+- Each agent has specialized instructions for their subject domain
+- Coordinator has 4-step routing decision tree
+- Validator has 5-category validation criteria (factual, curriculum, consistency, pedagogy, visual)
+
+**Adaptive Directives** (lib/ai/adaptive-directives.ts):
+- Generated dynamically based on: learning style (7 types), mastery level, recent struggles
+- Injected into every agent's prompt for real-time adaptation
+- Examples: Visual learner → "Generate SVG for every major concept"
+- Low mastery → "Slow down, break into smaller steps, check understanding frequently"
  
 10. DATABASE SCHEMA
 users table:

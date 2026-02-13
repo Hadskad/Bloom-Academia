@@ -2,13 +2,20 @@
 
 ## Overview
 
-Bloom Academia is an AI-powered voice-based tutoring platform that delivers personalized, adaptive education through natural conversation. Built with Next.js 15 and Google's Gemini 3 Flash, the system uses a multi-agent architecture where specialized AI teachers collaborate to provide subject-specific instruction while continuously adapting to each student's learning style, pace, and comprehension.
+Bloom Academia is an AI-powered school that delivers personalized, adaptive education through natural conversation. Built with Next.js 15 and Google's Gemini 3 Flash, the system uses a multi-agent architecture where specialized AI teachers collaborate to provide subject-specific instruction while continuously adapting to each student's learning style, pace, and comprehension.
 
 ## Core Architecture
 
-The platform employs a three-layer memory system that powers true personalization. Layer 1 stores permanent student traits—learning style preferences, persistent strengths, and recurring struggles—updated in real-time as patterns emerge during lessons. Layer 2 maintains session-specific conversation history, allowing the AI to reference previous exchanges and maintain contextual continuity. Layer 3 generates adaptive teaching directives on-the-fly, translating student data into actionable instructions that modify AI behavior moment-to-moment.
+The system employs a three-layer memory architecture that powers true personalization. 
+Layer 1 stores permanent student traits—learning style preferences, persistent strengths, and recurring struggles—updated in real-time as patterns emerge during lessons. 
+Layer 2 maintains session-specific conversation history, allowing the AI to reference previous exchanges and maintain contextual continuity.
+ Layer 3 generates adaptive teaching directives, and also holds the curriculum to be treated during the session. It also translate student data into actionable instructions that modify AI behavior moment-to-moment.
 
-Seven specialized AI agents handle distinct roles. The Coordinator routes student questions to appropriate specialists and manages session flow. Five subject specialists—Math, Science, English, History, and Art—each have unique teaching personalities, thinking levels, and voice characteristics. The Math specialist uses high-level reasoning for multi-step problem solving, while the Art specialist employs intuitive low-level thinking for creative encouragement. An Assessor evaluates mastery through structured quizzes, and a Motivator provides emotional support when students struggle. Each agent operates with agent-specific Google Search grounding (History and Science only), thinking level configuration, and distinct Neural2 TTS voices.
+Seven specialized AI agents handle distinct roles.
+ The Coordinator routes student questions to appropriate specialists and manages session flow. 
+ Five subject specialists namely Math, Science, English, History, and Art, each have unique teaching personalities, thinking levels, and voice characteristics. 
+ The Math specialist uses high-level reasoning for multi-step problem solving, while the Art specialist employs intuitive low-level thinking for creative encouragement. 
+ An Assessor evaluates mastery through structured quizzes, and a Motivator provides emotional support when students struggle. Each agent operates with agent-specific Google Search grounding (History and Science only), thinking level configuration, and distinct Neural2 TTS voices.
 
 ## Voice Pipeline & Progressive Streaming
 

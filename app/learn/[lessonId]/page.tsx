@@ -33,6 +33,229 @@ import { fetchWithRetry, getErrorMessage } from '@/lib/utils/retry'
 import { useOnlineStatus } from '@/lib/hooks/useOnlineStatus'
 import { useWalkthroughStore } from '@/lib/walkthrough/walkthrough-store'
 
+// ─── SSE Event Types ──────────────────────────────────────────────────────────
+
+interface SSETextEvent {
+  displayText: string
+  audioText: string
+  svg: string | null
+  agentName: string
+  handoffMessage?: string
+}
+
+interface SSEAudioEvent {
+  index: number
+  audioBase64: string | null
+  sentenceText: string
+}
+
+interface SSEDoneEvent {
+  lessonComplete: boolean
+  routing: { agentName: string; reason: string }
+}
+
+interface SSEEvent {
+  type: string
+  data: any
+}
+
+// ─── SSE Parser ───────────────────────────────────────────────────────────────
+
+/**
+ * Parse SSE events from a text buffer.
+ * SSE format: "event: <type>\ndata: <json>\n\n"
+ *
+ * Reference: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
+ */
+function parseSSEBuffer(buffer: string): { events: SSEEvent[]; remaining: string } {
+  const events: SSEEvent[] = []
+  const blocks = buffer.split('\n\n')
+
+  // Last block may be incomplete — keep it as remaining
+  const remaining = blocks.pop() || ''
+
+  for (const block of blocks) {
+    if (!block.trim()) continue
+
+    let type = ''
+    let data = ''
+
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event: ')) {
+        type = line.slice(7).trim()
+      } else if (line.startsWith('data: ')) {
+        data = line.slice(6)
+      }
+    }
+
+    if (type && data) {
+      try {
+        events.push({ type, data: JSON.parse(data) })
+      } catch {
+        // Malformed JSON — skip this event
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[SSE Parser] Failed to parse:', data.substring(0, 100))
+        }
+      }
+    }
+  }
+
+  return { events, remaining }
+}
+
+// ─── Web Audio API Gapless Playback ───────────────────────────────────────────
+
+/**
+ * Manages gapless sequential playback of MP3 audio chunks using the Web Audio API.
+ * Each chunk is a complete MP3 file (from Google Cloud TTS) decoded into a raw
+ * AudioBuffer and scheduled back-to-back with sample-accurate timing.
+ *
+ * References:
+ *   - MDN decodeAudioData: https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData
+ *   - MDN AudioBufferSourceNode: https://developer.mozilla.org/en-US/docs/Web/API/AudioBufferSourceNode
+ *   - MDN Web Audio API best practices: https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API/Best_practices
+ */
+class AudioChunkPlayer {
+  private audioContext: AudioContext | null = null
+  private scheduledEndTime = 0
+  private activeSources: AudioBufferSourceNode[] = []
+  private onAllPlayedCallback: (() => void) | null = null
+  private pendingChunks = 0
+  private totalScheduled = 0
+  // Serialization queue ensures chunks are decoded and scheduled in the order
+  // they arrive. Without this, concurrent decodeAudioData() calls can resolve
+  // out of order (shorter chunks decode faster), causing sentences to play in
+  // the wrong sequence.
+  // Reference: https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData
+  private scheduleQueue: Promise<void> = Promise.resolve()
+
+  /**
+   * Initialize AudioContext. Must be called after a user gesture (click/tap)
+   * to satisfy browser autoplay policies.
+   * Reference: https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API/Best_practices
+   */
+  init() {
+    if (!this.audioContext || this.audioContext.state === 'closed') {
+      this.audioContext = new AudioContext()
+    }
+    // Resume if suspended (Safari requires user gesture)
+    if (this.audioContext.state === 'suspended') {
+      this.audioContext.resume()
+    }
+    this.scheduledEndTime = this.audioContext.currentTime
+    this.activeSources = []
+    this.pendingChunks = 0
+    this.totalScheduled = 0
+    this.scheduleQueue = Promise.resolve()
+  }
+
+  /**
+   * Schedule a base64-encoded MP3 chunk for gapless playback.
+   * Chunks are queued so each one waits for the previous chunk to finish
+   * decoding before scheduling — prevents out-of-order playback.
+   */
+  scheduleChunk(base64Audio: string): Promise<void> {
+    if (!this.audioContext) return Promise.resolve()
+
+    this.pendingChunks++
+
+    // Chain onto the queue: this chunk's decode+schedule waits for all
+    // prior chunks to complete, preserving arrival order.
+    const chunkPromise = this.scheduleQueue.then(() =>
+      this.decodeAndSchedule(base64Audio)
+    )
+    this.scheduleQueue = chunkPromise
+    return chunkPromise
+  }
+
+  /**
+   * Decode a single MP3 chunk and schedule it on the Web Audio timeline.
+   * Called sequentially from the queue — never runs concurrently with itself.
+   * @private
+   */
+  private async decodeAndSchedule(base64Audio: string): Promise<void> {
+    if (!this.audioContext) return
+
+    try {
+      // Convert base64 → ArrayBuffer
+      const binaryString = atob(base64Audio)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+
+      // Decode MP3 → AudioBuffer
+      // Reference: https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData
+      const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer.slice(0))
+
+      // Create source node and schedule for gapless playback
+      const source = this.audioContext.createBufferSource()
+      source.buffer = audioBuffer
+      source.connect(this.audioContext.destination)
+
+      // Schedule at the end of the previous chunk (gapless)
+      const startTime = Math.max(this.scheduledEndTime, this.audioContext.currentTime)
+      source.start(startTime)
+
+      // Update end time for next chunk
+      this.scheduledEndTime = startTime + audioBuffer.duration
+
+      this.activeSources.push(source)
+      this.totalScheduled++
+
+      // Track when this source finishes
+      source.onended = () => {
+        this.activeSources = this.activeSources.filter(s => s !== source)
+        this.checkAllPlayed()
+      }
+    } catch (err) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[AudioChunkPlayer] Failed to decode/schedule chunk:', err)
+      }
+      // Skip failed chunk — better than stopping all audio
+    } finally {
+      this.pendingChunks--
+      this.checkAllPlayed()
+    }
+  }
+
+  /** Register callback for when all scheduled audio finishes playing */
+  onAllPlayed(callback: () => void) {
+    this.onAllPlayedCallback = callback
+  }
+
+  /** Signal that no more chunks will be added */
+  finalize() {
+    this.checkAllPlayed()
+  }
+
+  private checkAllPlayed() {
+    if (this.pendingChunks === 0 && this.activeSources.length === 0 && this.totalScheduled > 0) {
+      this.onAllPlayedCallback?.()
+    }
+  }
+
+  /** Stop all playback and release resources */
+  stop() {
+    for (const source of this.activeSources) {
+      try { source.stop() } catch { /* already stopped */ }
+    }
+    this.activeSources = []
+    this.pendingChunks = 0
+    this.totalScheduled = 0
+    this.onAllPlayedCallback = null
+  }
+
+  /** Close the AudioContext (component unmount) */
+  close() {
+    this.stop()
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close()
+    }
+    this.audioContext = null
+  }
+}
+
 interface Lesson {
   id: string
   title: string
@@ -82,6 +305,9 @@ export default function LearnPage({ params }: LearnPageProps) {
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const isOnline = useOnlineStatus()
   const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Web Audio API gapless playback
+  const audioPlayerRef = useRef<AudioChunkPlayer>(new AudioChunkPlayer())
 
   // Assessment mode state
   const [showAssessment, setShowAssessment] = useState(false)
@@ -166,93 +392,202 @@ export default function LearnPage({ params }: LearnPageProps) {
     }
   }
 
-  // Auto-start lesson with Coordinator greeting
-  async function sendInitialGreeting(userId: string, sessionId: string, lessonId: string, lesson: Lesson) {
+  // ─── Core SSE Teaching Request ─────────────────────────────────────────────
+  //
+  // Shared function used by greeting, audio recording, and media upload.
+  // Streams events from /api/teach/stream:
+  //   text  → show displayText/SVG immediately
+  //   audio → schedule each chunk via Web Audio API (gapless)
+  //   done  → handle lesson completion
+  //   error → show toast
+  //
+  // Fallback: if stream drops after text but before audio, fetches /api/tts.
+
+  async function sendTeachingRequestSSE(
+    requestBody: Record<string, any>,
+    options?: { isGreeting?: boolean }
+  ): Promise<void> {
+    // Cancel any pending request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
+
+    // Stop any currently playing audio
+    audioPlayerRef.current.stop()
+
+    setVoiceState('thinking')
+    setError(null)
+    setToastMessage(null)
+
+    let gotTextEvent = false
+    let gotAnyAudio = false
+    let audioText = '' // Saved for TTS fallback
+    let agentName = 'coordinator'
+
     try {
-      setVoiceState('thinking')
+      const response = await fetch('/api/teach/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: abortControllerRef.current.signal
+      })
 
-      // Send greeting prompt to coordinator
-      const greetingMessage = `[AUTO_START] Begin the lesson by greeting the student warmly and introducing today's lesson: "${lesson.title}". Mention the learning objective briefly: "${lesson.learning_objective}". Keep it brief (2-3 sentences) and engaging, end by asking if ready to proceed.`
+      if (!response.ok || !response.body) {
+        throw new Error(`SSE request failed: ${response.status}`)
+      }
 
-      const response = await fetchWithRetry(
-        '/api/teach/multi-ai-stream',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            userId,
-            sessionId,
-            lessonId,
-            userMessage: greetingMessage
-          })
-        },
-        {
-          maxRetries: 2,
-          onRetry: (attempt, error) => {
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`[Learn] Retry greeting attempt ${attempt}/2`, error)
+      // Initialize Web Audio API (safe — user already tapped mic/start)
+      audioPlayerRef.current.init()
+
+      // Track when all audio finishes playing
+      let lessonCompleteFlagSet = false
+      audioPlayerRef.current.onAllPlayed(() => {
+        setVoiceState('idle')
+        audioRef.current = null
+
+        if (lessonCompleteFlagSet) {
+          setShowAssessment(true)
+        }
+      })
+
+      // Read SSE stream via fetch + ReadableStream
+      // Reference: https://developer.mozilla.org/en-US/docs/Web/API/Streams_API/Using_readable_streams
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let sseBuffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        sseBuffer += decoder.decode(value, { stream: true })
+
+        const { events, remaining } = parseSSEBuffer(sseBuffer)
+        sseBuffer = remaining
+
+        for (const event of events) {
+          switch (event.type) {
+            case 'text': {
+              const textData = event.data as SSETextEvent
+              gotTextEvent = true
+              audioText = textData.audioText
+              agentName = textData.agentName
+
+              // Show text/SVG immediately — student sees response ~1-1.5s in
+              const teacherResponse = {
+                audioText: textData.audioText,
+                displayText: textData.displayText,
+                svg: textData.svg,
+                audioBase64: '', // Audio streams separately
+                agentName: textData.agentName,
+                handoffMessage: textData.handoffMessage
+              }
+
+              if (options?.isGreeting) {
+                setTeacherResponses([teacherResponse])
+              } else {
+                setTeacherResponses(prev => [...prev, teacherResponse])
+              }
+
+              setCurrentAgent(textData.agentName)
+              setVoiceState('speaking')
+              break
+            }
+
+            case 'audio': {
+              const audioData = event.data as SSEAudioEvent
+              if (audioData.audioBase64) {
+                gotAnyAudio = true
+                // Schedule for gapless playback via Web Audio API
+                audioPlayerRef.current.scheduleChunk(audioData.audioBase64)
+              }
+              // If audioBase64 is null, this chunk failed on backend — skip it
+              break
+            }
+
+            case 'done': {
+              const doneData = event.data as SSEDoneEvent
+              if (doneData.lessonComplete) {
+                lessonCompleteFlagSet = true
+              }
+              // Signal no more chunks coming
+              audioPlayerRef.current.finalize()
+              break
+            }
+
+            case 'error': {
+              console.error('[SSE] Server error event:', event.data.message)
+              setToastMessage(event.data.message || 'Something went wrong')
+              setVoiceState('idle')
+              break
             }
           }
         }
-      )
-
-      const data = await response.json()
-
-      // Add greeting response to history
-      setTeacherResponses([data.teacherResponse])
-
-      // Track agent
-      if (data.teacherResponse.agentName) {
-        setCurrentAgent(data.teacherResponse.agentName)
       }
 
-      // Play greeting audio
-      setVoiceState('speaking')
-
-      try {
-        const audio = new Audio(`data:audio/mpeg;base64,${data.teacherResponse.audioBase64}`)
-        audioRef.current = audio
-
-        audio.addEventListener('ended', () => {
-          setVoiceState('idle')
-          audioRef.current = null
-        })
-
-        audio.addEventListener('error', (e) => {
-          if (process.env.NODE_ENV === 'development') {
-            console.error('[Learn] Greeting audio error:', e)
+      // Stream finished — if we got text but zero audio, fallback to /api/tts
+      if (gotTextEvent && !gotAnyAudio && audioText) {
+        console.warn('[SSE] No audio received — falling back to /api/tts')
+        try {
+          const ttsResponse = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: audioText, agentName })
+          })
+          const ttsData = await ttsResponse.json()
+          if (ttsData.audioBase64) {
+            audioPlayerRef.current.init()
+            audioPlayerRef.current.onAllPlayed(() => {
+              setVoiceState('idle')
+              if (lessonCompleteFlagSet) setShowAssessment(true)
+            })
+            await audioPlayerRef.current.scheduleChunk(ttsData.audioBase64)
+            audioPlayerRef.current.finalize()
+          } else {
+            setVoiceState('idle')
+            setToastMessage('Audio unavailable, but you can read the response above.')
           }
+        } catch {
           setVoiceState('idle')
-          audioRef.current = null
-        })
-
-        await audio.play()
-      } catch (audioError) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('[Learn] Greeting audio play failed:', audioError)
+          setToastMessage('Audio unavailable, but you can read the response above.')
         }
+      }
+
+      // If we never got text or audio, something went wrong
+      if (!gotTextEvent) {
         setVoiceState('idle')
       }
-    } catch (err) {
-      if (process.env.NODE_ENV === 'development') {
-        console.error('[Learn] Failed to send initial greeting:', err)
+
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[SSE] Request aborted')
+        }
+        return
       }
-      // Don't show error to user, they can still start manually
+
+      console.error('[SSE] Error:', err)
+      setToastMessage(getErrorMessage(err))
       setVoiceState('idle')
     }
+  }
+
+  // Auto-start lesson with Coordinator greeting
+  async function sendInitialGreeting(userId: string, sessionId: string, lessonId: string, lesson: Lesson) {
+    const greetingMessage = `[AUTO_START] Begin the lesson by greeting the student warmly and introducing today's lesson: "${lesson.title}". Mention the learning objective briefly: "${lesson.learning_objective}". Keep it brief (2-3 sentences) and engaging, end by asking if ready to proceed.`
+
+    await sendTeachingRequestSSE(
+      { userId, sessionId, lessonId, userMessage: greetingMessage },
+      { isGreeting: true }
+    )
   }
 
   async function handleAudioRecording(audioBase64: string, mimeType: string) {
     if (process.env.NODE_ENV === 'development') {
-      console.log('[Learn] Received audio recording:', {
-        size: audioBase64.length,
-        mimeType
-      })
+      console.log('[Learn] Received audio recording:', { size: audioBase64.length, mimeType })
     }
 
-    // Get userId from localStorage
     const userId = localStorage.getItem('userId')
     if (!userId || !sessionId || !lessonId) {
       setToastMessage('Missing required information. Please refresh the page.')
@@ -260,147 +595,28 @@ export default function LearnPage({ params }: LearnPageProps) {
       return
     }
 
-    // Check if online before making request
     if (!isOnline) {
       setToastMessage('You are offline. Please check your internet connection.')
       setVoiceState('idle')
       return
     }
 
-    // Cancel any pending requests
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-
-    // Create new abort controller for this request
-    abortControllerRef.current = new AbortController()
-
-    try {
-      // Set state to thinking (AI processing)
-      setVoiceState('thinking')
-      setError(null)
-      setToastMessage(null)
-
-      // Send audio to Multi-AI teacher endpoint with retry logic
-      // Audio is sent directly to Gemini 3 Flash (no transcription needed)
-      // Reference: https://ai.google.dev/gemini-api/docs/audio
-      const response = await fetchWithRetry(
-        '/api/teach/multi-ai-stream',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            userId,
-            sessionId,
-            lessonId,
-            audioBase64,
-            audioMimeType: mimeType
-          }),
-          signal: abortControllerRef.current.signal
-        },
-        {
-          maxRetries: 3,
-          onRetry: (attempt, error) => {
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`[Learn] Retry attempt ${attempt}/3`, error)
-            }
-          }
-        }
-      )
-
-      const data = await response.json()
-
-      // Add new response to history (includes agentName from multi-ai endpoint)
-      setTeacherResponses(prev => [...prev, data.teacherResponse])
-
-      // Track which agent responded for voice indicator
-      if (data.teacherResponse.agentName) {
-        setCurrentAgent(data.teacherResponse.agentName)
-      }
-
-      // Check if AI determined lesson is complete
-      if (data.lessonComplete === true) {
-        // Trigger assessment after audio finishes
-        // Store completion flag to trigger assessment after audio
-        localStorage.setItem('aiTriggeredCompletion', 'true')
-      }
-
-      // Set state to speaking and play audio
-      setVoiceState('speaking')
-
-      // Try to play audio, fallback to text-only if fails
-      try {
-        const audio = new Audio(`data:audio/mpeg;base64,${data.teacherResponse.audioBase64}`)
-        audioRef.current = audio
-
-        // Return to idle when audio finishes
-        audio.addEventListener('ended', () => {
-          setVoiceState('idle')
-          audioRef.current = null
-
-          // Check if AI triggered completion - start assessment after audio finishes
-          const aiCompleted = localStorage.getItem('aiTriggeredCompletion')
-          if (aiCompleted === 'true') {
-            localStorage.removeItem('aiTriggeredCompletion')
-            setShowAssessment(true)
-          }
-        })
-
-        // Handle audio errors gracefully
-        audio.addEventListener('error', (e) => {
-          if (process.env.NODE_ENV === 'development') {
-            console.error('[Learn] Audio playback error:', e)
-          }
-          setVoiceState('idle')
-          setToastMessage('Audio playback failed, but you can read the response above.')
-          audioRef.current = null
-        })
-
-        await audio.play()
-      } catch (audioError) {
-        // Audio failed, but we still have the text response
-        if (process.env.NODE_ENV === 'development') {
-          console.error('[Learn] Audio play failed:', audioError)
-        }
-        setVoiceState('idle')
-        setToastMessage('Audio unavailable, but you can read the response above.')
-      }
-    } catch (err: any) {
-      // Don't show error if request was aborted (user started new request)
-      if (err.name === 'AbortError') {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[Learn] Request aborted')
-        }
-        return
-      }
-
-      if (process.env.NODE_ENV === 'development') {
-        console.error('[Learn] Error getting teacher response:', err)
-      }
-
-      // Parse error and show user-friendly message
-      const errorMessage = getErrorMessage(err)
-      setToastMessage(errorMessage)
-      setVoiceState('idle')
-    }
+    await sendTeachingRequestSSE({
+      userId, sessionId, lessonId,
+      audioBase64,
+      audioMimeType: mimeType
+    })
   }
 
   /**
    * Handle media (image/video) upload from MediaUpload component
-   * Sends media to the same teaching API with vision analysis support
+   * Sends media to the SSE teaching endpoint with vision analysis support
    */
   async function handleMediaUpload(mediaBase64: string, mimeType: string, mediaType: 'image' | 'video') {
     if (process.env.NODE_ENV === 'development') {
-      console.log('[Learn] Received media upload:', {
-        size: mediaBase64.length,
-        mimeType,
-        mediaType
-      })
+      console.log('[Learn] Received media upload:', { size: mediaBase64.length, mimeType, mediaType })
     }
 
-    // Get userId from localStorage
     const userId = localStorage.getItem('userId')
     if (!userId || !sessionId || !lessonId) {
       setToastMessage('Missing required information. Please refresh the page.')
@@ -408,129 +624,19 @@ export default function LearnPage({ params }: LearnPageProps) {
       return
     }
 
-    // Check if online before making request
     if (!isOnline) {
       setToastMessage('You are offline. Please check your internet connection.')
       setVoiceState('idle')
       return
     }
 
-    // Cancel any pending requests
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-
-    // Create new abort controller for this request
-    abortControllerRef.current = new AbortController()
-
-    try {
-      // Set state to thinking (AI processing)
-      setVoiceState('thinking')
-      setError(null)
-      setToastMessage(null)
-
-      // Send media to Multi-AI teacher endpoint with retry logic
-      // Media is sent directly to Gemini 3 Flash for vision analysis
-      // Reference: https://ai.google.dev/gemini-api/docs/image-understanding
-      // Reference: https://ai.google.dev/gemini-api/docs/video-understanding
-      const response = await fetchWithRetry(
-        '/api/teach/multi-ai-stream',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            userId,
-            sessionId,
-            lessonId,
-            userMessage: `[MEDIA_UPLOAD] Student uploaded a ${mediaType}. Please analyze it and provide detailed feedback.`,
-            mediaBase64,
-            mediaMimeType: mimeType,
-            mediaType
-          }),
-          signal: abortControllerRef.current.signal
-        },
-        {
-          maxRetries: 3,
-          onRetry: (attempt, error) => {
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`[Learn] Media upload retry attempt ${attempt}/3`, error)
-            }
-          }
-        }
-      )
-
-      const data = await response.json()
-
-      // Add new response to history
-      setTeacherResponses(prev => [...prev, data.teacherResponse])
-
-      // Track which agent responded
-      if (data.teacherResponse.agentName) {
-        setCurrentAgent(data.teacherResponse.agentName)
-      }
-
-      // Check if AI determined lesson is complete
-      if (data.lessonComplete === true) {
-        localStorage.setItem('aiTriggeredCompletion', 'true')
-      }
-
-      // Set state to speaking and play audio
-      setVoiceState('speaking')
-
-      // Try to play audio response
-      try {
-        const audio = new Audio(`data:audio/mpeg;base64,${data.teacherResponse.audioBase64}`)
-        audioRef.current = audio
-
-        audio.addEventListener('ended', () => {
-          setVoiceState('idle')
-          audioRef.current = null
-
-          // Check if AI triggered completion
-          const aiCompleted = localStorage.getItem('aiTriggeredCompletion')
-          if (aiCompleted === 'true') {
-            localStorage.removeItem('aiTriggeredCompletion')
-            setShowAssessment(true)
-          }
-        })
-
-        audio.addEventListener('error', (e) => {
-          if (process.env.NODE_ENV === 'development') {
-            console.error('[Learn] Audio playback error:', e)
-          }
-          setVoiceState('idle')
-          setToastMessage('Audio playback failed, but you can read the response above.')
-          audioRef.current = null
-        })
-
-        await audio.play()
-      } catch (audioError) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('[Learn] Audio play failed:', audioError)
-        }
-        setVoiceState('idle')
-        setToastMessage('Audio unavailable, but you can read the response above.')
-      }
-    } catch (err: any) {
-      // Don't show error if request was aborted
-      if (err.name === 'AbortError') {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[Learn] Media upload request aborted')
-        }
-        return
-      }
-
-      if (process.env.NODE_ENV === 'development') {
-        console.error('[Learn] Error uploading media:', err)
-      }
-
-      // Parse error and show user-friendly message
-      const errorMessage = getErrorMessage(err)
-      setToastMessage(errorMessage)
-      setVoiceState('idle')
-    }
+    await sendTeachingRequestSSE({
+      userId, sessionId, lessonId,
+      userMessage: `[MEDIA_UPLOAD] Student uploaded a ${mediaType}. Please analyze it and provide detailed feedback.`,
+      mediaBase64,
+      mediaMimeType: mimeType,
+      mediaType
+    })
   }
 
   // Handle voice recorder state changes from VoiceRecorder component
@@ -551,7 +657,21 @@ export default function LearnPage({ params }: LearnPageProps) {
     }
   }
 
-  // Cleanup: Cancel pending requests on unmount
+  // Resume audio playback when tab becomes visible again
+  // Reference: https://developer.mozilla.org/en-US/docs/Web/API/Document/visibilitychange_event
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        // AudioContext may have been suspended by the browser in background
+        audioPlayerRef.current?.init()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [])
+
+  // Cleanup: Cancel pending requests and release audio resources on unmount
   useEffect(() => {
     return () => {
       if (abortControllerRef.current) {
@@ -561,6 +681,7 @@ export default function LearnPage({ params }: LearnPageProps) {
         audioRef.current.pause()
         audioRef.current = null
       }
+      audioPlayerRef.current.close()
     }
   }, [])
 

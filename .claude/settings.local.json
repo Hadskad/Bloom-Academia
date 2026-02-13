@@ -10,7 +10,9 @@
       "Bash(npx tsc:*)",
       "Bash(npx tsx:*)",
       "Bash(npx eslint:*)",
-      "WebFetch(domain:ai.google.dev)"
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(where:*)",
+      "Bash(npx next lint:*)"
     ]
   }
 }

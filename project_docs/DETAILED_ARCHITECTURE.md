@@ -26,7 +26,7 @@
 
 ## Executive Summary
 
-**Bloom Academia** is a voice-first, AI-powered personalized learning platform that provides adaptive teaching across multiple subjects. The system uses a multi-agent AI architecture powered by Google's Gemini 3 models, with sophisticated quality assurance, mastery tracking, and real-time profile enrichment.
+**Bloom Academia** is a voice-first, AI-powered school that provides adaptive teaching across multiple subjects. The system uses a multi-agent AI architecture powered by Google's Gemini 3 models, with sophisticated quality assurance, mastery tracking, and real-time profile enrichment.
 
 ### Key Capabilities
 

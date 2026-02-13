@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import { Gavel, Play, ArrowRight } from 'lucide-react';
+import { Gavel, Play, ArrowRight, Loader2 } from 'lucide-react';
 import { useWalkthroughStore } from '@/lib/walkthrough/walkthrough-store';
 import { QuickNameModal } from '@/components/QuickNameModal';
 
@@ -10,10 +10,11 @@ export function FinalCTA() {
   const [enrollUrl, setEnrollUrl] = useState('/welcome');
   const [showQuickNameModal, setShowQuickNameModal] = useState(false);
   const [pendingWalkthrough, setPendingWalkthrough] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
   const { startWalkthrough } = useWalkthroughStore();
 
   useEffect(() => {
-    // Check if user already exists in localStorage
+    setIsHydrated(true);
     const userId = localStorage.getItem('userId');
     setEnrollUrl(userId ? '/dashboard' : '/welcome');
   }, []);
@@ -100,7 +101,7 @@ export function FinalCTA() {
               {/* Content */}
               <div className="p-6">
                 <p className="text-gray-700 leading-relaxed mb-4">
-                  Bloom Academia is more than a demo — it&apos;s the foundation of a complete AI-powered school.
+                  Bloom Academia is more than a demo, it&apos;s the foundation of a complete AI-powered school.
                 </p>
 
                 <p className="text-gray-600 text-sm leading-relaxed mb-6">
@@ -119,11 +120,25 @@ export function FinalCTA() {
                   {/* Primary CTA */}
                   <button
                     onClick={handleStartWalkthrough}
-                    className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-primary to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold px-6 py-4 rounded-xl text-lg transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                    disabled={!isHydrated}
+                    className={`w-full flex items-center justify-center gap-3 text-white font-bold px-6 py-4 rounded-xl text-lg transition-all shadow-lg ${
+                      isHydrated
+                        ? 'bg-gradient-to-r from-primary to-blue-600 hover:from-blue-600 hover:to-blue-700 hover:shadow-xl transform hover:-translate-y-0.5'
+                        : 'bg-gray-400 cursor-not-allowed'
+                    }`}
                   >
-                    <Play className="w-5 h-5" />
-                    Explore Bloom — Judge Walkthrough
-                    <ArrowRight className="w-5 h-5" />
+                    {isHydrated ? (
+                      <>
+                        <Play className="w-5 h-5" />
+                        Explore Bloom — Judge Walkthrough
+                        <ArrowRight className="w-5 h-5" />
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Loading... Please refresh page if loading takes too long
+                      </>
+                    )}
                   </button>
 
                   {/* Secondary CTA */}
@@ -142,8 +157,8 @@ export function FinalCTA() {
             </div>
 
             {/* Decorative elements */}
-            <div className="absolute -top-4 -right-4 w-24 h-24 bg-primary/10 rounded-full blur-2xl"></div>
-            <div className="absolute -bottom-4 -left-4 w-32 h-32 bg-accent/10 rounded-full blur-2xl"></div>
+            <div className="absolute -top-4 -right-4 w-24 h-24 bg-primary/10 rounded-full blur-2xl pointer-events-none"></div>
+            <div className="absolute -bottom-4 -left-4 w-32 h-32 bg-accent/10 rounded-full blur-2xl pointer-events-none"></div>
           </div>
         </div>
       </div>

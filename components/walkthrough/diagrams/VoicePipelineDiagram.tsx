@@ -15,7 +15,7 @@ export function VoicePipelineDiagram() {
         Voice Pipeline Architecture
       </text>
       <text x="400" y="55" textAnchor="middle" fill="#64748b" fontSize="12">
-        Real-time Voice Learning: Soniox STT → Gemini 3 Flash → Google TTS
+        Real-time Voice Learning: Direct Audio → Gemini 3 Flash → Google TTS
       </text>
 
       {/* Student */}
@@ -26,26 +26,11 @@ export function VoicePipelineDiagram() {
         <text x="50" y="115" textAnchor="middle" fill="#3b82f6" fontSize="9">Speaks question</text>
       </g>
 
-      {/* Arrow 1 */}
+      {/* Arrow 1 - Direct to Gemini */}
       <g transform="translate(125, 140)">
-        <path d="M 0 10 L 70 10" stroke="#3b82f6" strokeWidth="2" markerEnd="url(#blueArrow)" />
-        <text x="35" y="0" textAnchor="middle" fill="#3b82f6" fontSize="8">Audio Stream</text>
-      </g>
-
-      {/* Soniox STT */}
-      <g transform="translate(200, 90)">
-        <rect width="130" height="100" rx="12" fill="#fef3c7" stroke="#f59e0b" strokeWidth="2" />
-        <text x="65" y="25" textAnchor="middle" fill="#92400e" fontSize="11" fontWeight="bold">🎤 Soniox STT</text>
-        <text x="65" y="45" textAnchor="middle" fill="#d97706" fontSize="9">Speech-to-Text</text>
-        <rect x="15" y="55" width="100" height="35" rx="6" fill="#fbbf24" />
-        <text x="65" y="72" textAnchor="middle" fill="#78350f" fontSize="8">WebSocket</text>
-        <text x="65" y="84" textAnchor="middle" fill="#78350f" fontSize="8">Real-time</text>
-      </g>
-
-      {/* Arrow 2 */}
-      <g transform="translate(335, 140)">
-        <path d="M 0 10 L 70 10" stroke="#f59e0b" strokeWidth="2" markerEnd="url(#orangeArrow)" />
-        <text x="35" y="0" textAnchor="middle" fill="#f59e0b" fontSize="8">Transcript</text>
+        <path d="M 0 10 L 270 10" stroke="#3b82f6" strokeWidth="2" markerEnd="url(#blueArrow)" />
+        <text x="135" y="0" textAnchor="middle" fill="#3b82f6" fontSize="9" fontWeight="600">Audio (base64-encoded)</text>
+        <text x="135" y="25" textAnchor="middle" fill="#64748b" fontSize="7">No transcription needed - Gemini understands audio natively</text>
       </g>
 
       {/* Gemini 3 Flash */}
@@ -56,10 +41,10 @@ export function VoicePipelineDiagram() {
 
         <rect x="10" y="55" width="140" height="75" rx="6" fill="white" stroke="#c4b5fd" strokeWidth="1" />
         <text x="80" y="72" textAnchor="middle" fill="#5b21b6" fontSize="8" fontWeight="600">Processing:</text>
-        <text x="80" y="86" textAnchor="middle" fill="#7c3aed" fontSize="7">• Multi-agent routing</text>
-        <text x="80" y="98" textAnchor="middle" fill="#7c3aed" fontSize="7">• Context from memory</text>
-        <text x="80" y="110" textAnchor="middle" fill="#7c3aed" fontSize="7">• SVG diagram generation</text>
-        <text x="80" y="122" textAnchor="middle" fill="#7c3aed" fontSize="7">• Streaming response</text>
+        <text x="80" y="86" textAnchor="middle" fill="#7c3aed" fontSize="7">• Native audio understanding</text>
+        <text x="80" y="98" textAnchor="middle" fill="#7c3aed" fontSize="7">• Multi-agent routing</text>
+        <text x="80" y="110" textAnchor="middle" fill="#7c3aed" fontSize="7">• Context from 3-layer memory</text>
+        <text x="80" y="122" textAnchor="middle" fill="#7c3aed" fontSize="7">• SVG + Text streaming</text>
       </g>
 
       {/* Arrow 3 */}
@@ -91,16 +76,16 @@ export function VoicePipelineDiagram() {
 
         <g transform="translate(20, 40)">
           <rect width="170" height="55" rx="6" fill="#fef3c7" stroke="#fcd34d" strokeWidth="1" />
-          <text x="85" y="20" textAnchor="middle" fill="#92400e" fontSize="9" fontWeight="600">Streaming Response</text>
-          <text x="85" y="35" textAnchor="middle" fill="#d97706" fontSize="8">18-36% latency reduction</text>
-          <text x="85" y="48" textAnchor="middle" fill="#d97706" fontSize="8">No wait for full response</text>
+          <text x="85" y="20" textAnchor="middle" fill="#92400e" fontSize="9" fontWeight="600">SSE Streaming</text>
+          <text x="85" y="35" textAnchor="middle" fill="#d97706" fontSize="8">Text → Audio chunks → Done</text>
+          <text x="85" y="48" textAnchor="middle" fill="#d97706" fontSize="8">~1.2s to first audio</text>
         </g>
 
         <g transform="translate(210, 40)">
           <rect width="170" height="55" rx="6" fill="#dbeafe" stroke="#93c5fd" strokeWidth="1" />
-          <text x="85" y="20" textAnchor="middle" fill="#1e40af" fontSize="9" fontWeight="600">Temp API Keys</text>
-          <text x="85" y="35" textAnchor="middle" fill="#3b82f6" fontSize="8">Secure STT connection</text>
-          <text x="85" y="48" textAnchor="middle" fill="#3b82f6" fontSize="8">Auto-refresh & retry logic</text>
+          <text x="85" y="20" textAnchor="middle" fill="#1e40af" fontSize="9" fontWeight="600">Web Audio API</text>
+          <text x="85" y="35" textAnchor="middle" fill="#3b82f6" fontSize="8">Gapless playback</text>
+          <text x="85" y="48" textAnchor="middle" fill="#3b82f6" fontSize="8">0ms between chunks</text>
         </g>
       </g>
 
@@ -108,11 +93,11 @@ export function VoicePipelineDiagram() {
       <g transform="translate(620, 320)">
         <rect width="150" height="110" rx="10" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1" />
         <text x="75" y="22" textAnchor="middle" fill="#334155" fontSize="10" fontWeight="bold">📁 Key Files</text>
-        <text x="75" y="42" textAnchor="middle" fill="#3b82f6" fontSize="8">VoiceInput.tsx</text>
+        <text x="75" y="42" textAnchor="middle" fill="#3b82f6" fontSize="8">VoiceRecorder.tsx</text>
         <text x="75" y="56" textAnchor="middle" fill="#3b82f6" fontSize="8">agent-manager.ts</text>
         <text x="75" y="70" textAnchor="middle" fill="#3b82f6" fontSize="8">google-tts.ts</text>
-        <text x="75" y="84" textAnchor="middle" fill="#3b82f6" fontSize="8">multi-ai-stream/route.ts</text>
-        <text x="75" y="100" textAnchor="middle" fill="#64748b" fontSize="7">(click to view code)</text>
+        <text x="75" y="84" textAnchor="middle" fill="#3b82f6" fontSize="8">teach/stream/route.ts</text>
+        <text x="75" y="100" textAnchor="middle" fill="#64748b" fontSize="7">(MediaRecorder API)</text>
       </g>
 
       {/* Arrow Markers */}

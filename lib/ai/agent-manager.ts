@@ -307,30 +307,19 @@ export class AIAgentManager {
       // Build validation prompt with full context
       const validationPrompt = this.buildValidationPrompt(response, context);
 
-      // Call Gemini Validator with HIGH thinking level and JSON schema
-      // Timeout: 10 seconds (fail-safe)
+      // Call Gemini Validator with JSON schema — no timeout.
+      // Validator runs in the background (fire-and-forget from SSE route).
+      // If rejected, the correction is stored for deferred self-correction
+      // in the specialist's next interaction.
       // Reference: https://ai.google.dev/gemini-api/docs/structured-output
-      const validationPromise = this.ai.models.generateContent({
+      const validationResponse = await this.ai.models.generateContent({
         model: validator.model,
         contents: validationPrompt,
         config: {
           responseMimeType: 'application/json',
-          responseJsonSchema: z.toJSONSchema(validationResultSchema),
-          thinkingConfig: {
-            thinkingLevel: ThinkingLevel.HIGH // Thorough verification
-          }
+          responseJsonSchema: z.toJSONSchema(validationResultSchema)
         }
       });
-
-      // Race against timeout (10s fail-safe)
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Validation timeout')), 10000)
-      );
-
-      const validationResponse = await Promise.race([
-        validationPromise,
-        timeoutPromise
-      ]);
 
       const responseText = validationResponse.text;
 
@@ -911,6 +900,221 @@ Respond in JSON format with your validation decision.`;
         `Agent ${agentName} streaming error: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
+  }
+
+  /**
+   * Get a streaming response with an early audioText callback for SSE delivery.
+   *
+   * Streams the Gemini response and progressively extracts the audioText field
+   * from the partial JSON buffer. audioText is the FIRST field in the schema,
+   * so per Gemini's documented behavior ("the model will produce outputs in the
+   * same order as the keys in the schema"), it completes before displayText/svg.
+   *
+   * As soon as audioText has its closing quote, fires `onAudioTextReady` so the
+   * SSE route can begin TTS synthesis immediately — while displayText and svg
+   * are still streaming. The full AgentResponse (with all fields) is returned
+   * after the stream completes.
+   *
+   * References:
+   * - Streaming: https://ai.google.dev/gemini-api/docs/text-generation?lang=node
+   * - Structured output field order: https://ai.google.dev/gemini-api/docs/structured-output
+   *
+   * @param agentName - Name of the agent to use
+   * @param userMessage - The student's message
+   * @param context - Current context
+   * @param onAudioTextReady - Callback fired when audioText is fully available (before stream ends)
+   * @returns Full AgentResponse after stream completes and JSON is validated
+   */
+  async getAgentResponseStreamingWithCallback(
+    agentName: string,
+    userMessage: string,
+    context: AgentContext,
+    onAudioTextReady: (audioText: string, agentName: string, agentId: string) => void
+  ): Promise<AgentResponse> {
+    const agent = await this.getAgent(agentName);
+
+    // Ensure cache is fresh (auto-renews if needed)
+    // Pass agent's model ID to get the correct cache (Flash or Pro)
+    const cacheName = await ensureCacheFresh(agent.model);
+
+    // Build the dynamic context (student profile, history, lesson, user message)
+    const dynamicPrompt = this.buildDynamicContext(agent, userMessage, context);
+
+    try {
+      // Determine if this agent should use Google Search grounding
+      // Reference: https://ai.google.dev/gemini-api/docs/google-search
+      const useGrounding = this.shouldUseGoogleSearch(agent.name);
+      const tools = useGrounding ? [{ googleSearch: {} }] : undefined;
+
+      // Call Gemini streaming API with JSON schema validation
+      // Reference: https://ai.google.dev/gemini-api/docs/structured-output
+      const stream = await this.ai.models.generateContentStream({
+        model: agent.model,
+        contents: dynamicPrompt,
+        config: {
+          ...(cacheName && { cachedContent: cacheName }),
+          responseMimeType: 'application/json',
+          responseJsonSchema: z.toJSONSchema(teachingResponseSchema),
+          thinkingConfig: {
+            thinkingLevel: this.getThinkingLevelForAgent(agent.name)
+          },
+          ...(tools && { tools })
+        }
+      });
+
+      // Buffer JSON chunks and progressively extract audioText
+      let jsonBuffer = '';
+      let audioCallbackFired = false;
+
+      for await (const chunk of stream) {
+        const text = chunk.text || '';
+        if (text) {
+          jsonBuffer += text;
+        }
+
+        // Fire the callback as soon as audioText field is complete.
+        // audioText is the first field in the schema, so it finishes before
+        // displayText/svg — letting TTS start while Gemini is still generating.
+        if (!audioCallbackFired) {
+          const audioText = this.tryExtractAudioTextField(jsonBuffer);
+          if (audioText !== null) {
+            audioCallbackFired = true;
+            onAudioTextReady(audioText, agent.name, agent.id);
+          }
+        }
+      }
+
+      // Validate we received a response
+      if (!jsonBuffer || jsonBuffer.trim().length === 0) {
+        throw new Error(`No response from ${agentName} (streaming with callback)`);
+      }
+
+      // Parse complete JSON with fallback sanitization
+      // Known Gemini API bug: https://github.com/googleapis/python-genai/issues/20
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(jsonBuffer);
+      } catch (parseError) {
+        try {
+          const sanitized = jsonBuffer.replace(
+            /"([^"\\]*(\\.[^"\\]*)*)"/g,
+            (match) => {
+              return match
+                .replace(/(?<!\\)\n/g, '\\n')
+                .replace(/(?<!\\)\r/g, '\\r')
+                .replace(/(?<!\\)\t/g, '\\t');
+            }
+          );
+          parsedJson = JSON.parse(sanitized);
+          console.warn(`[StreamingCB] Applied control character sanitization for ${agentName}`);
+        } catch (sanitizeError) {
+          console.error('Failed to parse streaming JSON:', jsonBuffer.substring(0, 500));
+          throw new Error(
+            `Invalid JSON from ${agentName} (streaming CB): ${parseError instanceof Error ? parseError.message : 'Parse error'}`
+          );
+        }
+      }
+
+      // Validate against Zod schema
+      const validated = teachingResponseSchema.parse(parsedJson);
+
+      // Post-process text fields (SVG extraction, escape sequences, LaTeX protection)
+      let finalSvg = validated.svg;
+      let finalDisplayText = validated.displayText;
+      let finalAudioText = validated.audioText;
+
+      // Protect LaTeX commands before replacing escape sequences
+      const LATEX_PLACEHOLDER = '___LATEX_BACKSLASH___';
+      const latexCommands = [
+        'frac', 'sqrt', 'cbrt', 'times', 'div', 'pm', 'mp', 'cdot',
+        'leq', 'geq', 'neq', 'approx', 'equiv',
+        'sum', 'prod', 'int', 'oint', 'left', 'right', 'begin', 'end',
+        'text', 'mathbf', 'mathrm', 'mathit', 'mathcal',
+        'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta',
+        'iota', 'kappa', 'lambda', 'mu', 'nu', 'xi', 'pi', 'rho', 'sigma',
+        'tau', 'upsilon', 'phi', 'chi', 'psi', 'omega',
+        'Gamma', 'Delta', 'Theta', 'Lambda', 'Xi', 'Pi', 'Sigma', 'Upsilon',
+        'Phi', 'Psi', 'Omega',
+        'ldots', 'cdots', 'vdots', 'ddots',
+        'infty', 'partial', 'nabla', 'angle'
+      ];
+
+      let protectedText = finalDisplayText;
+      latexCommands.forEach(cmd => {
+        const regex = new RegExp(`\\\\${cmd}`, 'g');
+        protectedText = protectedText.replace(regex, `${LATEX_PLACEHOLDER}${cmd}`);
+      });
+
+      protectedText = protectedText
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t');
+
+      finalDisplayText = protectedText.replace(new RegExp(LATEX_PLACEHOLDER, 'g'), '\\');
+
+      // Extract SVG from displayText if Gemini embedded it there
+      if (!finalSvg && finalDisplayText.includes('[SVG]')) {
+        const displayExtracted = this.extractSvgFromText(finalDisplayText);
+        if (displayExtracted.svg) {
+          finalSvg = displayExtracted.svg;
+          finalDisplayText = displayExtracted.cleanedText;
+        }
+      }
+
+      // Clean SVG markers from audioText
+      if (finalAudioText.includes('[SVG]') || finalAudioText.includes('<svg')) {
+        const audioExtracted = this.extractSvgFromText(finalAudioText);
+        finalAudioText = audioExtracted.cleanedText;
+      }
+
+      // Extract grounding metadata if Google Search was used
+      const groundingMetadata = this.extractGroundingMetadata({ candidates: [stream] });
+
+      return {
+        audioText: finalAudioText,
+        displayText: finalDisplayText,
+        svg: finalSvg,
+        lessonComplete: validated.lessonComplete,
+        teachingPhase: validated.teachingPhase,
+        agentName: agent.name,
+        agentId: agent.id,
+        ...(groundingMetadata && { groundingMetadata })
+      };
+
+    } catch (error) {
+      console.error(`Error in streaming with callback from ${agentName}:`, error);
+      throw new Error(
+        `Agent ${agentName} streaming CB error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Try to extract the audioText field from a partial JSON buffer.
+   *
+   * Looks for the complete audioText value (opening + closing quote found).
+   * Returns null if the field hasn't been fully streamed yet.
+   *
+   * audioText is the first field in the teachingResponseSchema, so per Gemini's
+   * documented behavior it completes before other fields during streaming.
+   *
+   * @param jsonBuffer - The partial JSON string accumulated so far
+   * @returns Unescaped audioText string if complete, null otherwise
+   * @private
+   */
+  private tryExtractAudioTextField(jsonBuffer: string): string | null {
+    // Match audioText field with complete value (closing quote present)
+    // Regex handles escaped characters within the string value
+    const audioMatch = jsonBuffer.match(/"audioText"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (!audioMatch) return null;
+
+    // Unescape JSON string value
+    return audioMatch[1]
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
   }
 
   /**

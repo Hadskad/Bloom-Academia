@@ -30,14 +30,34 @@ TABLE OF CONTENTS
 15.	Deployment
  
 1. ARCHITECTURE OVERVIEW
-This document contains the complete, verified backend architecture for the AI-powered school platform MVP.
-Core Principle: No Gemini Live API usage. We use separate STT (Soniox), AI (Gemini 3 Flash), and TTS (Google Cloud) services.
+This document contains the complete, verified backend architecture for Bloom Academia.
 
-Why NOT Gemini Live API:
+**Core Principle**: Multi-Agent AI System using separate STT (Soniox), AI (Gemini 3 Flash), and TTS (Google Cloud) services.
+
+**Why NOT Gemini Live API:**
 •	Gemini Live API only supports Gemini 2.5 Flash Native Audio models
 •	Gemini 3 Flash does NOT have Live API support
 •	Gemini 3 Flash provides superior reasoning (1501 Elo score)
 •	Our architecture provides flexibility and best-in-class components
+
+**Multi-Agent System (9 Agents):**
+1. **Coordinator** - Routes questions to specialists (thinking: LOW)
+2. **Math Specialist** - Teaches mathematics (thinking: HIGH)
+3. **Science Specialist** - Teaches science concepts (thinking: MEDIUM, Google Search grounding)
+4. **English Specialist** - Teaches language/literature (thinking: HIGH)
+5. **History Specialist** - Teaches historical events (thinking: HIGH, Google Search grounding)
+6. **Art Specialist** - Teaches creative subjects (thinking: LOW)
+7. **Assessor** - Evaluates student mastery (thinking: MEDIUM)
+8. **Motivator** - Provides emotional support (thinking: LOW)
+9. **Validator** - Prevents hallucinations (thinking: HIGH, uses Gemini 3 Pro)
+
+**Key Innovations:**
+- Distinct thinking levels per agent (optimized for task)
+- Validator with regeneration loop (max 2 retries)
+- Google Search grounding for History/Science (factual accuracy)
+- Context caching (75% cost reduction, 1-hour TTL)
+- Real-time profile enrichment during sessions
+- Rules-based mastery detection (6 criteria)
  
 2. COMPLETE FILE STRUCTURE
 ai-school-mvp/
@@ -134,26 +154,58 @@ Latency Breakdown:
 •	Total: 2-4 seconds (acceptable for MVP)
  
 4. API ROUTES SPECIFICATION
-4.1 POST /api/teach - Main Teaching Endpoint
-Purpose: Orchestrates the complete teaching interaction
+4.1 POST /api/teach/multi-ai-stream - Main Teaching Endpoint
+**Actual Implementation** (app/api/teach/multi-ai-stream/route.ts)
+
+Purpose: Orchestrates complete multi-agent teaching interaction with adaptive learning
 
 Request Body:
+```json
 {
   "userId": "uuid",
   "lessonId": "uuid",
   "sessionId": "uuid",
-  "userMessage": "transcribed text from Soniox"
+  "userMessage": "transcribed text from Soniox",
+  "messageType": "text" | "audio" | "media" | "image",
+  "audio": { "base64": "...", "mimeType": "audio/wav" },  // Optional
+  "image": { "base64": "...", "mimeType": "image/jpeg" }  // Optional
 }
+```
 
-Response:
+Response (Actual Structure):
+```json
 {
   "success": true,
   "teacherResponse": {
-    "text": "AI teacher response",
-    "svg": "<svg>...</svg>",  // Optional
-    "audioBase64": "..."       // TTS audio
+    "audioText": "Text optimized for TTS (natural spoken language)",
+    "displayText": "Markdown-formatted text for screen display",
+    "svg": "<svg>...</svg>" | null,
+    "audioBase64": "base64-encoded MP3",
+    "agentName": "math_specialist",
+    "handoffMessage": "Switching to Science specialist..." | null
+  },
+  "lessonComplete": false,
+  "routing": {
+    "agentName": "math_specialist",
+    "reason": "Subject match for mathematics question"
   }
 }
+```
+
+**Processing Steps:**
+1. Fetch user profile, session history, lesson data, active specialist, mastery level (parallel)
+2. Generate adaptive directives based on learning style + mastery
+3. Route to coordinator (first turn) or continue with active specialist
+4. Generate response using Gemini 3 Flash with adaptive instructions
+5. Validate response with Validator agent (rejects/regenerates if needed)
+6. Parallel processing:
+   - Generate speech via Google Cloud TTS
+   - Extract SVG code
+   - Log adaptation (fire-and-forget)
+   - Enrich profile if patterns detected (fire-and-forget)
+   - Extract evidence and record mastery (fire-and-forget)
+7. Save interaction to session history
+8. Return complete response
 
 Implementation (app/api/teach/route.ts):
 import { NextRequest, NextResponse } from 'next/server'
@@ -237,25 +289,44 @@ export async function GET() {
 }
  
 5. COMPLETE 3-LAYER MEMORY SYSTEM
+**Actual Implementation** (Criterion 4: Memory Persists)
+
 This is the core of personalized learning. Three distinct layers work together to provide context-aware teaching.
+
 5.1 Layer 1: Persistent User Profile (Database)
 Location: Supabase PostgreSQL database
 Lifespan: Permanent (across all sessions)
 Purpose: Store fundamental user information and discovered learning patterns
 
-Data Structure:
+**Updated Data Structure:**
+```sql
 users table:
 - id (UUID primary key)
 - name (text)
+- email (text, unique) -- Supabase Auth
 - age (integer)
 - grade_level (integer)
-- learning_style (text) // visual/auditory/kinesthetic - discovered over time
-- strengths (text[])    // Topics they excel at
-- struggles (text[])    // Topics needing work
-- preferences (JSONB)   // Pace, explanation style, etc
-- total_learning_time (integer) // minutes
+- learning_style (text) -- visual/auditory/kinesthetic (discovered over time)
+- strengths (text[])    -- Topics they excel at (real-time updates)
+- struggles (text[])    -- Topics needing work (real-time updates)
+- preferences (JSONB)   -- { pace, encouragement, visual_preference }
+- total_learning_time (integer) -- minutes
 - created_at (timestamp)
 - updated_at (timestamp)
+```
+
+**Real-Time Profile Enrichment** (lib/memory/profile-enricher.ts):
+- Triggers during active session when evidence thresholds met
+- Detects patterns: 3+ struggles (score < 50) OR 80%+ mastery
+- Updates profile mid-session (not just at end)
+- Invalidates cache immediately → next interaction loads updated profile
+- Fire-and-forget pattern (errors logged, not thrown)
+
+**Trajectory Analysis** (lib/memory/trajectory-analyzer.ts):
+- Analyzes last 5 sessions for trends
+- Detects: improving (+10 delta), declining (-10 delta), stable
+- Confidence scoring based on session count + volatility
+- Stores in trajectory_snapshots table for historical analysis
 
 Implementation (lib/memory/profile-manager.ts):
 import { supabase } from '@/lib/db/supabase'
