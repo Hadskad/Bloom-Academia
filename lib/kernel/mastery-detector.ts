@@ -20,6 +20,7 @@
  */
 
 import { supabase } from '@/lib/db/supabase'
+import { refreshMasteryCache } from '@/lib/ai/mastery-tracker'
 
 /**
  * Mastery rules configuration (teacher-configurable)
@@ -137,6 +138,11 @@ export async function recordMasteryEvidence(
     }
 
     console.log(`[Mastery] Recorded evidence: ${evidenceType} for lesson ${lessonId.slice(0, 8)}`)
+
+    // Invalidate + re-cache mastery level so the next interaction
+    // reads the updated value instantly from cache.
+    refreshMasteryCache(userId, lessonId)
+      .catch((err) => console.error('[Mastery] Failed to refresh mastery cache:', err));
   } catch (error) {
     console.error('Failed to record mastery evidence:', error)
     // Don't throw - evidence recording should not break lesson flow

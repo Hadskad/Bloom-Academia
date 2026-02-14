@@ -29,6 +29,60 @@ import { enrichProfileIfNeeded } from '@/lib/memory/profile-enricher';
 import { getPendingCorrection } from '@/lib/ai/pending-corrections';
 import type { PendingCorrection } from '@/lib/ai/pending-corrections';
 
+// ─── In-Memory Lesson Cache ────────────────────────────────────────────────
+//
+// Lessons are static curriculum content — they don't change during a session.
+// Cache with a 30-minute TTL to avoid repeated DB queries across interactions.
+//
+// Reference: Same caching pattern as lib/memory/profile-manager.ts
+
+interface LessonCacheEntry {
+  lesson: {
+    id: string;
+    title: string;
+    subject: string;
+    grade_level: number;
+    learning_objective: string;
+    [key: string]: any;
+  };
+  timestamp: number;
+}
+
+const lessonCache = new Map<string, LessonCacheEntry>();
+const LESSON_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Fetch lesson from cache or DB.
+ * Caches the result for 30 minutes (lessons are static curriculum content).
+ */
+async function getCachedLesson(lessonId: string): Promise<{
+  data: LessonCacheEntry['lesson'] | null;
+  error: any;
+}> {
+  // Check cache
+  const cached = lessonCache.get(lessonId);
+  if (cached && Date.now() - cached.timestamp < LESSON_CACHE_TTL_MS) {
+    return { data: cached.lesson, error: null };
+  }
+
+  // Cache miss — fetch from DB
+  const result = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('id', lessonId)
+    .single();
+
+  // Cache successful result
+  if (!result.error && result.data) {
+    lessonCache.set(lessonId, {
+      lesson: result.data,
+      timestamp: Date.now()
+    });
+  }
+
+  return result;
+}
+
 /**
  * Loaded teaching context — all data needed before generating a response
  */
@@ -99,18 +153,14 @@ export async function loadTeachingContext(
       console.warn('[teaching-helpers] Session history unavailable, continuing with empty history:', err.message);
       return [] as Awaited<ReturnType<typeof getSessionHistory>>;
     }),
-    supabase
-      .from('lessons')
-      .select('*')
-      .eq('id', lessonId)
-      .single(),
+    getCachedLesson(lessonId),
     agentManager.getActiveSpecialist(sessionId),
     getCurrentMasteryLevel(userId, lessonId),
     getPendingCorrection(sessionId)
   ]);
 
-  if (lessonResult.error) {
-    throw new Error(`Failed to fetch lesson: ${lessonResult.error.message}`);
+  if (lessonResult.error || !lessonResult.data) {
+    throw new Error(`Failed to fetch lesson: ${lessonResult.error?.message ?? 'Lesson not found'}`);
   }
 
   return {

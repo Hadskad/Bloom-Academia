@@ -1090,6 +1090,208 @@ Respond in JSON format with your validation decision.`;
   }
 
   /**
+   * Stream Gemini response with per-sentence callbacks for progressive TTS.
+   *
+   * Unlike getAgentResponseStreamingWithCallback (which fires a single callback
+   * when audioText is fully complete), this method fires a callback for EACH
+   * sentence as it appears in the audioText field during streaming. This lets
+   * the SSE route fire TTS per-sentence, overlapping AI generation with synthesis.
+   *
+   * How it works:
+   * - Gemini streams JSON fields sequentially in schema order
+   * - audioText is the first field → it streams completely before displayText/svg
+   * - tryExtractNextSentences() incrementally extracts sentences from partial audioText
+   * - Each sentence triggers onSentenceReady() immediately
+   * - When the audioText field completes, any remaining text is also emitted
+   *
+   * Reference: https://ai.google.dev/gemini-api/docs/structured-output
+   *
+   * @param agentName - Name of the agent to use
+   * @param userMessage - The student's message
+   * @param context - Current context
+   * @param onSentenceReady - Fired for each sentence extracted during streaming
+   * @param onAudioTextComplete - Fired once when the full audioText field is available
+   * @returns Full AgentResponse after stream completes and JSON is validated
+   */
+  async getAgentResponseStreamingWithSentenceCallbacks(
+    agentName: string,
+    userMessage: string,
+    context: AgentContext,
+    onSentenceReady: (sentence: string, index: number) => void,
+    onAudioTextComplete?: (fullAudioText: string) => void
+  ): Promise<AgentResponse> {
+    const agent = await this.getAgent(agentName);
+
+    // Ensure cache is fresh (auto-renews if needed)
+    const cacheName = await ensureCacheFresh(agent.model);
+
+    // Build the dynamic context (student profile, history, lesson, user message)
+    const dynamicPrompt = this.buildDynamicContext(agent, userMessage, context);
+
+    try {
+      // Determine if this agent should use Google Search grounding
+      // Reference: https://ai.google.dev/gemini-api/docs/google-search
+      const useGrounding = this.shouldUseGoogleSearch(agent.name);
+      const tools = useGrounding ? [{ googleSearch: {} }] : undefined;
+
+      // Call Gemini streaming API with JSON schema validation
+      // Reference: https://ai.google.dev/gemini-api/docs/structured-output
+      const stream = await this.ai.models.generateContentStream({
+        model: agent.model,
+        contents: dynamicPrompt,
+        config: {
+          ...(cacheName && { cachedContent: cacheName }),
+          responseMimeType: 'application/json',
+          responseJsonSchema: z.toJSONSchema(teachingResponseSchema),
+          thinkingConfig: {
+            thinkingLevel: this.getThinkingLevelForAgent(agent.name)
+          },
+          ...(tools && { tools })
+        }
+      });
+
+      // Buffer JSON chunks and progressively extract sentences from audioText
+      let jsonBuffer = '';
+      let extractedLength = 0;
+      let audioTextFieldComplete = false;
+      let sentenceIndex = 0;
+
+      for await (const chunk of stream) {
+        const text = chunk.text || '';
+        if (text) {
+          jsonBuffer += text;
+        }
+
+        // Extract new sentences from the partial audioText field
+        if (!audioTextFieldComplete) {
+          const extracted = this.tryExtractNextSentences(jsonBuffer, extractedLength);
+
+          if (extracted.newSentences.length > 0) {
+            for (const sentence of extracted.newSentences) {
+              onSentenceReady(sentence, sentenceIndex);
+              sentenceIndex++;
+            }
+            extractedLength = extracted.totalExtractedLength;
+          }
+
+          if (extracted.fieldComplete) {
+            audioTextFieldComplete = true;
+
+            // Extract the full audioText for the complete callback
+            const fullAudioText = this.tryExtractAudioTextField(jsonBuffer);
+            if (fullAudioText && onAudioTextComplete) {
+              onAudioTextComplete(fullAudioText);
+            }
+          }
+        }
+      }
+
+      // Validate we received a response
+      if (!jsonBuffer || jsonBuffer.trim().length === 0) {
+        throw new Error(`No response from ${agentName} (streaming with sentence callbacks)`);
+      }
+
+      // Parse complete JSON with fallback sanitization
+      // Known Gemini API bug: https://github.com/googleapis/python-genai/issues/20
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(jsonBuffer);
+      } catch (parseError) {
+        try {
+          const sanitized = jsonBuffer.replace(
+            /"([^"\\]*(\\.[^"\\]*)*)"/g,
+            (match) => {
+              return match
+                .replace(/(?<!\\)\n/g, '\\n')
+                .replace(/(?<!\\)\r/g, '\\r')
+                .replace(/(?<!\\)\t/g, '\\t');
+            }
+          );
+          parsedJson = JSON.parse(sanitized);
+          console.warn(`[SentenceCB] Applied control character sanitization for ${agentName}`);
+        } catch (sanitizeError) {
+          console.error('Failed to parse streaming JSON:', jsonBuffer.substring(0, 500));
+          throw new Error(
+            `Invalid JSON from ${agentName} (sentence CB): ${parseError instanceof Error ? parseError.message : 'Parse error'}`
+          );
+        }
+      }
+
+      // Validate against Zod schema
+      const validated = teachingResponseSchema.parse(parsedJson);
+
+      // Post-process text fields (SVG extraction, escape sequences, LaTeX protection)
+      let finalSvg = validated.svg;
+      let finalDisplayText = validated.displayText;
+      let finalAudioText = validated.audioText;
+
+      // Protect LaTeX commands before replacing escape sequences
+      const LATEX_PLACEHOLDER = '___LATEX_BACKSLASH___';
+      const latexCommands = [
+        'frac', 'sqrt', 'cbrt', 'times', 'div', 'pm', 'mp', 'cdot',
+        'leq', 'geq', 'neq', 'approx', 'equiv',
+        'sum', 'prod', 'int', 'oint', 'left', 'right', 'begin', 'end',
+        'text', 'mathbf', 'mathrm', 'mathit', 'mathcal',
+        'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta',
+        'iota', 'kappa', 'lambda', 'mu', 'nu', 'xi', 'pi', 'rho', 'sigma',
+        'tau', 'upsilon', 'phi', 'chi', 'psi', 'omega',
+        'Gamma', 'Delta', 'Theta', 'Lambda', 'Xi', 'Pi', 'Sigma', 'Upsilon',
+        'Phi', 'Psi', 'Omega',
+        'ldots', 'cdots', 'vdots', 'ddots',
+        'infty', 'partial', 'nabla', 'angle'
+      ];
+
+      let protectedText = finalDisplayText;
+      latexCommands.forEach(cmd => {
+        const regex = new RegExp(`\\\\${cmd}`, 'g');
+        protectedText = protectedText.replace(regex, `${LATEX_PLACEHOLDER}${cmd}`);
+      });
+
+      protectedText = protectedText
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t');
+
+      finalDisplayText = protectedText.replace(new RegExp(LATEX_PLACEHOLDER, 'g'), '\\');
+
+      // Extract SVG from displayText if Gemini embedded it there
+      if (!finalSvg && finalDisplayText.includes('[SVG]')) {
+        const displayExtracted = this.extractSvgFromText(finalDisplayText);
+        if (displayExtracted.svg) {
+          finalSvg = displayExtracted.svg;
+          finalDisplayText = displayExtracted.cleanedText;
+        }
+      }
+
+      // Clean SVG markers from audioText
+      if (finalAudioText.includes('[SVG]') || finalAudioText.includes('<svg')) {
+        const audioExtracted = this.extractSvgFromText(finalAudioText);
+        finalAudioText = audioExtracted.cleanedText;
+      }
+
+      // Extract grounding metadata if Google Search was used
+      const groundingMetadata = this.extractGroundingMetadata({ candidates: [stream] });
+
+      return {
+        audioText: finalAudioText,
+        displayText: finalDisplayText,
+        svg: finalSvg,
+        lessonComplete: validated.lessonComplete,
+        teachingPhase: validated.teachingPhase,
+        agentName: agent.name,
+        agentId: agent.id,
+        ...(groundingMetadata && { groundingMetadata })
+      };
+
+    } catch (error) {
+      console.error(`Error in streaming with sentence callbacks from ${agentName}:`, error);
+      throw new Error(
+        `Agent ${agentName} sentence CB error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
    * Try to extract the audioText field from a partial JSON buffer.
    *
    * Looks for the complete audioText value (opening + closing quote found).

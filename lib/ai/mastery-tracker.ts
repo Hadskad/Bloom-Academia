@@ -18,6 +18,57 @@
 
 import { supabase } from '@/lib/db/supabase';
 
+// ─── In-Memory Mastery Cache ────────────────────────────────────────────────
+//
+// Same caching pattern used by profile-manager.ts (5-min TTL, Map-based).
+// Mastery levels rarely change within a session — typically only when new
+// evidence is recorded via recordMasteryEvidence(). On update, the cache is
+// invalidated AND re-populated so the next read is instant.
+//
+// Reference: lib/memory/profile-manager.ts (cache pattern)
+
+interface MasteryCacheEntry {
+  level: number;
+  timestamp: number;
+}
+
+const masteryCache = new Map<string, MasteryCacheEntry>();
+const MASTERY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Build cache key from userId + lessonId */
+function masteryCacheKey(userId: string, lessonId: string): string {
+  return `${userId}:${lessonId}`;
+}
+
+/**
+ * Invalidate cached mastery level for a specific user+lesson.
+ * Called by mastery-detector.ts after recording new evidence.
+ */
+export function invalidateMasteryCache(userId: string, lessonId: string): void {
+  masteryCache.delete(masteryCacheKey(userId, lessonId));
+}
+
+/**
+ * Invalidate and immediately re-cache the mastery level.
+ * Ensures the next read hits cache instead of DB.
+ */
+export async function refreshMasteryCache(userId: string, lessonId: string): Promise<void> {
+  invalidateMasteryCache(userId, lessonId);
+  // Re-fetch and cache — getCurrentMasteryLevel checks cache first,
+  // but since we just invalidated, it will hit DB and populate cache.
+  await getCurrentMasteryLevel(userId, lessonId);
+}
+
+/** Remove expired entries from cache */
+function cleanExpiredMasteryCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of masteryCache.entries()) {
+    if (now - entry.timestamp > MASTERY_CACHE_TTL_MS) {
+      masteryCache.delete(key);
+    }
+  }
+}
+
 /**
  * Gets student's current mastery level for a specific lesson
  *
@@ -49,6 +100,18 @@ export async function getCurrentMasteryLevel(
   userId: string,
   lessonId: string
 ): Promise<number> {
+  // Check cache first (0ms vs ~50-100ms DB query)
+  const cacheKey = masteryCacheKey(userId, lessonId);
+  const cached = masteryCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < MASTERY_CACHE_TTL_MS) {
+    return cached.level;
+  }
+
+  // Periodically clean expired entries
+  if (masteryCache.size > 50) {
+    cleanExpiredMasteryCache();
+  }
+
   try {
     // ═══════════════════════════════════════════════════════════
     // METHOD 1: Calculate from mastery_evidence (most accurate)
@@ -60,6 +123,12 @@ export async function getCurrentMasteryLevel(
       .select('evidence_type, metadata')
       .eq('user_id', userId)
       .eq('lesson_id', lessonId);
+
+    // Helper: cache and return a mastery level
+    function cacheAndReturn(level: number): number {
+      masteryCache.set(cacheKey, { level, timestamp: Date.now() });
+      return level;
+    }
 
     if (!evidenceError && evidenceData && evidenceData.length > 0) {
       // Count correct vs incorrect answers
@@ -82,7 +151,7 @@ export async function getCurrentMasteryLevel(
           mastery: masteryPercentage
         });
 
-        return masteryPercentage;
+        return cacheAndReturn(masteryPercentage);
       }
 
       // Evidence exists but no correct/incorrect answers yet
@@ -101,7 +170,7 @@ export async function getCurrentMasteryLevel(
           sampleSize: qualityScores.length
         });
 
-        return avgQuality;
+        return cacheAndReturn(avgQuality);
       }
     }
 
@@ -123,7 +192,7 @@ export async function getCurrentMasteryLevel(
         mastery: progressData.mastery_level
       });
 
-      return progressData.mastery_level;
+      return cacheAndReturn(progressData.mastery_level);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -131,7 +200,7 @@ export async function getCurrentMasteryLevel(
     // ═══════════════════════════════════════════════════════════
 
     console.log(`[Mastery Tracker] No data found for lesson ${lessonId.substring(0, 8)}, defaulting to 50 (neutral)`);
-    return 50;
+    return cacheAndReturn(50);
 
   } catch (error) {
     console.error('[Mastery Tracker] Error getting mastery level:', error);

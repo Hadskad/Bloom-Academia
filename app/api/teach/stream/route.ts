@@ -157,18 +157,29 @@ export async function POST(request: NextRequest) {
         if (userMessage && userMessage.startsWith('[AUTO_START]')) {
           console.log('[SSE] AUTO_START detected — Coordinator handling directly');
 
-          // TTS starts from the callback as soon as audioText is extracted from
-          // the stream — before displayText/svg finish generating.
-          let ttsPromise: Promise<void> | null = null;
+          // Progressive TTS: fire per-sentence during streaming
+          const sentenceTTSPromises: Array<{ promise: Promise<Buffer | null>; sentence: string }> = [];
 
-          const aiResponse = await agentManager.getAgentResponseStreamingWithCallback(
+          const aiResponse = await agentManager.getAgentResponseStreamingWithSentenceCallbacks(
             'coordinator',
             userMessage,
             context,
-            (audioText) => {
-              // audioText is ready — kick off TTS immediately while stream continues
-              console.log(`[SSE] AUTO_START audioText ready at T+${Date.now() - startTime}ms`);
-              ttsPromise = streamAudioChunks(audioText, 'coordinator', send);
+            (sentence, index) => {
+              // Each sentence fires TTS immediately during streaming
+              console.log(`[SSE] AUTO_START sentence ${index} TTS fired at T+${Date.now() - startTime}ms`);
+              const chunks = sentence.length > MAX_CHUNK_LENGTH
+                ? splitLongSentence(sentence)
+                : [sentence];
+
+              for (const chunkText of chunks) {
+                sentenceTTSPromises.push({
+                  promise: generateSpeech(chunkText, 'coordinator').catch((err) => {
+                    console.warn(`[SSE TTS] Chunk failed: "${chunkText.substring(0, 40)}..."`, err);
+                    return null;
+                  }),
+                  sentence: chunkText
+                });
+              }
             }
           );
 
@@ -181,11 +192,12 @@ export async function POST(request: NextRequest) {
           });
           console.log(`[SSE] AUTO_START text sent at T+${Date.now() - startTime}ms`);
 
-          // Wait for TTS to finish (it started during streaming)
-          if (ttsPromise) {
-            await ttsPromise;
-          } else {
-            // Callback never fired — fall back to starting TTS now
+          // Flush TTS results as SSE audio events IN ORDER
+          // By the time we get here, many TTS calls may already be complete
+          await flushTTSResults(sentenceTTSPromises, send);
+
+          // Fall back to streamAudioChunks if no sentences were extracted
+          if (sentenceTTSPromises.length === 0) {
             await streamAudioChunks(aiResponse.audioText, 'coordinator', send);
           }
 
@@ -237,26 +249,37 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        // --- Phase 5: Get specialist response with early TTS kickoff ---
+        // --- Phase 5: Get specialist response with progressive per-sentence TTS ---
         console.log(`[SSE] Getting response from ${routing.agentName}`);
 
         let aiResponse: AgentResponse;
-        // TTS starts from the callback as soon as audioText is extracted from
-        // the stream — before displayText/svg finish generating.
-        let ttsPromise: Promise<void> | null = null;
+        // Progressive TTS: fire per-sentence during Gemini streaming
+        const sentenceTTSPromises: Array<{ promise: Promise<Buffer | null>; sentence: string }> = [];
 
         try {
-          aiResponse = await agentManager.getAgentResponseStreamingWithCallback(
+          aiResponse = await agentManager.getAgentResponseStreamingWithSentenceCallbacks(
             routing.agentName,
             userMessage || '',
             {
               ...context,
               previousAgent: ctx.activeSpecialist || 'coordinator'
             },
-            (audioText, earlyAgentName) => {
-              // audioText is ready — kick off TTS immediately while stream continues
-              console.log(`[SSE] audioText ready at T+${Date.now() - startTime}ms`);
-              ttsPromise = streamAudioChunks(audioText, earlyAgentName, send);
+            (sentence, index) => {
+              // Each sentence fires TTS immediately during streaming
+              console.log(`[SSE] Sentence ${index} TTS fired at T+${Date.now() - startTime}ms`);
+              const chunks = sentence.length > MAX_CHUNK_LENGTH
+                ? splitLongSentence(sentence)
+                : [sentence];
+
+              for (const chunkText of chunks) {
+                sentenceTTSPromises.push({
+                  promise: generateSpeech(chunkText, routing.agentName).catch((err) => {
+                    console.warn(`[SSE TTS] Chunk failed: "${chunkText.substring(0, 40)}..."`, err);
+                    return null;
+                  }),
+                  sentence: chunkText
+                });
+              }
             }
           );
         } catch (streamingError) {
@@ -340,12 +363,13 @@ export async function POST(request: NextRequest) {
             .catch((err) => console.error('[SSE] Failed to mark correction as delivered:', err));
         }
 
-        // --- Phase 8: Wait for TTS audio chunks ---
-        // If the callback fired, TTS started during streaming and may already
-        // be partially complete. Otherwise, start TTS now as a fallback.
-        if (ttsPromise) {
-          await ttsPromise;
+        // --- Phase 8: Flush progressive TTS results as SSE audio events ---
+        // TTS calls were fired per-sentence during streaming (Phase 5).
+        // By now, many may already be resolved. Flush in order.
+        if (sentenceTTSPromises.length > 0) {
+          await flushTTSResults(sentenceTTSPromises, send);
         } else {
+          // No sentences were extracted during streaming — fall back to batch TTS
           await streamAudioChunks(aiResponse.audioText, aiResponse.agentName, send);
         }
 
@@ -453,6 +477,31 @@ async function streamAudioChunks(
         sentenceText: batchResults[i].sentenceText
       });
     }
+  }
+}
+
+/**
+ * Flush progressive TTS results as SSE audio events IN ORDER.
+ *
+ * TTS promises were fired per-sentence during Gemini streaming. By the time
+ * this function is called, many may already be resolved. We await each
+ * sequentially to preserve sentence order for the frontend's gapless playback.
+ *
+ * @param promises - Ordered array of TTS promises with their sentence text
+ * @param send - SSE send function
+ */
+async function flushTTSResults(
+  promises: Array<{ promise: Promise<Buffer | null>; sentence: string }>,
+  send: (event: string, data: Record<string, any>) => void
+): Promise<void> {
+  for (let i = 0; i < promises.length; i++) {
+    const { promise, sentence } = promises[i];
+    const buffer = await promise;
+    send('audio', {
+      index: i,
+      audioBase64: buffer ? buffer.toString('base64') : null,
+      sentenceText: sentence
+    });
   }
 }
 

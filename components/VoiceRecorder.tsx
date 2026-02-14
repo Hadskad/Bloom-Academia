@@ -45,6 +45,17 @@ export function VoiceRecorder({
   const audioChunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
 
+  // VAD (Voice Activity Detection) refs
+  // Reference: https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const animFrameRef = useRef<number | null>(null)
+  const silenceStartRef = useRef<number | null>(null)
+
+  // VAD thresholds — 2 seconds of silence triggers auto-stop
+  const SILENCE_THRESHOLD = 10 // Average byte frequency (0-255), values below this = silence
+  const SILENCE_DURATION_MS = 2000 // 2 seconds of continuous silence
+
   // Use ref to always have latest callback (avoids stale closure)
   const onStateChangeRef = useRef(onStateChange)
   onStateChangeRef.current = onStateChange
@@ -136,6 +147,13 @@ export function VoiceRecorder({
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop())
       }
+      // Clean up VAD resources
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current)
+      }
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close().catch(() => {})
+      }
     }
   }, [])
 
@@ -213,7 +231,8 @@ export function VoiceRecorder({
           onStateChangeRef.current?.('idle')
         }
 
-        // Stop and release microphone stream
+        // Stop and release microphone stream + VAD resources
+        cleanupVAD()
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop())
           streamRef.current = null
@@ -233,6 +252,62 @@ export function VoiceRecorder({
       setIsRecording(true)
       onStateChangeRef.current?.('recording')
       console.log('✅ Recording started successfully')
+
+      // --- VAD Setup: Detect 2s of silence to auto-stop ---
+      // Reference: https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode
+      try {
+        const audioContext = new AudioContext()
+        audioContextRef.current = audioContext
+
+        const source = audioContext.createMediaStreamSource(stream)
+        const analyser = audioContext.createAnalyser()
+        analyser.fftSize = 256 // Small FFT for fast computation
+        analyserRef.current = analyser
+
+        source.connect(analyser)
+        // Don't connect analyser to destination — we only need to read data, not play it
+
+        const bufferLength = analyser.frequencyBinCount
+        const dataArray = new Uint8Array(bufferLength)
+
+        silenceStartRef.current = null
+
+        function checkSilence() {
+          if (!analyserRef.current) return
+
+          analyserRef.current.getByteFrequencyData(dataArray)
+
+          // Calculate average amplitude across all frequency bins
+          let sum = 0
+          for (let i = 0; i < bufferLength; i++) {
+            sum += dataArray[i]
+          }
+          const average = sum / bufferLength
+
+          if (average < SILENCE_THRESHOLD) {
+            // Below threshold — silence detected
+            if (silenceStartRef.current === null) {
+              silenceStartRef.current = Date.now()
+            } else if (Date.now() - silenceStartRef.current >= SILENCE_DURATION_MS) {
+              // 2 seconds of continuous silence — auto-stop
+              console.log('🔇 VAD: 2s silence detected, auto-stopping recording')
+              stopRecording()
+              return // Stop the loop
+            }
+          } else {
+            // Speech detected — reset silence timer
+            silenceStartRef.current = null
+          }
+
+          animFrameRef.current = requestAnimationFrame(checkSilence)
+        }
+
+        // Start the detection loop
+        animFrameRef.current = requestAnimationFrame(checkSilence)
+      } catch (vadError) {
+        // VAD is optional — if it fails, manual stop still works
+        console.warn('⚠️ VAD setup failed (manual stop still works):', vadError)
+      }
     } catch (err) {
       console.error('❌ Error starting recording:', err)
       setError(
@@ -245,7 +320,24 @@ export function VoiceRecorder({
     }
   }
 
+  /** Clean up VAD resources (AudioContext, AnalyserNode, animation frame) */
+  function cleanupVAD() {
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current)
+      animFrameRef.current = null
+    }
+    silenceStartRef.current = null
+    analyserRef.current = null
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {})
+      audioContextRef.current = null
+    }
+  }
+
   function stopRecording() {
+    // Clean up VAD first
+    cleanupVAD()
+
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       console.log('⏹️ Stopping recording...')
       mediaRecorderRef.current.stop()

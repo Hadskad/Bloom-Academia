@@ -130,11 +130,12 @@ class AudioChunkPlayer {
   private scheduleQueue: Promise<void> = Promise.resolve()
 
   /**
-   * Initialize AudioContext. Must be called after a user gesture (click/tap)
-   * to satisfy browser autoplay policies.
+   * Create or resume the AudioContext. Call once after a user gesture (click/tap)
+   * to satisfy browser autoplay policies. Subsequent calls are no-ops if the
+   * context is already running.
    * Reference: https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API/Best_practices
    */
-  init() {
+  ensureContext() {
     if (!this.audioContext || this.audioContext.state === 'closed') {
       this.audioContext = new AudioContext()
     }
@@ -142,7 +143,16 @@ class AudioChunkPlayer {
     if (this.audioContext.state === 'suspended') {
       this.audioContext.resume()
     }
-    this.scheduledEndTime = this.audioContext.currentTime
+  }
+
+  /**
+   * Reset playback state for a new SSE request. Reuses the existing
+   * AudioContext created by ensureContext() instead of recreating it.
+   * Must be called before scheduling new chunks.
+   */
+  init() {
+    this.ensureContext()
+    this.scheduledEndTime = this.audioContext!.currentTime
     this.activeSources = []
     this.pendingChunks = 0
     this.totalScheduled = 0
@@ -382,7 +392,26 @@ export default function LearnPage({ params }: LearnPageProps) {
       const { sessionId: newSessionId } = await sessionResponse.json()
       setSessionId(newSessionId)
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ✨ PREFETCH OPTIMIZATION: Warm server-side caches before initial greeting
+      // ═══════════════════════════════════════════════════════════════════════════
+      // This populates in-memory caches (profile, lesson, mastery) on the server,
+      // eliminating ~100-200ms from the first student interaction.
+      //
+      // Cache invalidation happens automatically:
+      // - Mastery: refreshMasteryCache() after recordMasteryEvidence()
+      // - Profile: invalidateCache() after enrichProfileIfNeeded()
+      // - Lesson: Static curriculum, 30-min TTL (no invalidation needed)
+      //
+      // Reference: app/api/teach/prefetch/route.ts
+      // Reference: MEMORY.md - Caching (context loading optimization)
+      await prefetchTeachingContext(userId, newSessionId, lessonId).catch((err) => {
+        // Prefetch failure is non-critical — caches will populate on first message
+        console.warn('[Prefetch] Failed to warm context (will populate on first message):', err)
+      })
+
       // ✅ AUTO-START LESSON: Trigger coordinator to greet student and introduce lesson
+      // Initial greeting now uses warm cache → faster response
       await sendInitialGreeting(userId, newSessionId, lessonId, currentLesson)
     } catch (err) {
       console.error('Error loading lesson:', err)
@@ -573,6 +602,47 @@ export default function LearnPage({ params }: LearnPageProps) {
     }
   }
 
+  // ─── Prefetch Teaching Context ────────────────────────────────────────────────
+  //
+  // Warms server-side in-memory caches (profile, lesson, mastery) before the
+  // initial greeting. This eliminates ~100-200ms from the first student interaction.
+  //
+  // Cache invalidation happens automatically on the server:
+  // - Mastery: refreshMasteryCache() after recordMasteryEvidence()
+  // - Profile: invalidateCache() after enrichProfileIfNeeded()
+  // - Lesson: Static curriculum, 30-min TTL (no invalidation needed)
+  //
+  // Reference: /api/teach/prefetch endpoint
+  async function prefetchTeachingContext(
+    userId: string,
+    sessionId: string,
+    lessonId: string
+  ): Promise<void> {
+    const startTime = Date.now()
+    console.log('[Prefetch] Warming teaching context caches...')
+
+    try {
+      const response = await fetch('/api/teach/prefetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, sessionId, lessonId })
+      })
+
+      const result = await response.json()
+      const duration = Date.now() - startTime
+
+      if (result.ok) {
+        console.log(`[Prefetch] ✅ Context warmed in ${duration}ms:`, result.cacheStatus)
+      } else {
+        console.warn(`[Prefetch] ⚠️ Failed (${duration}ms):`, result.error)
+      }
+    } catch (err) {
+      const duration = Date.now() - startTime
+      console.warn(`[Prefetch] ❌ Error (${duration}ms):`, err)
+      throw err // Re-throw so caller can handle
+    }
+  }
+
   // Auto-start lesson with Coordinator greeting
   async function sendInitialGreeting(userId: string, sessionId: string, lessonId: string, lesson: Lesson) {
     const greetingMessage = `[AUTO_START] Begin the lesson by greeting the student warmly and introducing today's lesson: "${lesson.title}". Mention the learning objective briefly: "${lesson.learning_objective}". Keep it brief (2-3 sentences) and engaging, end by asking if ready to proceed.`
@@ -642,6 +712,14 @@ export default function LearnPage({ params }: LearnPageProps) {
   // Handle voice recorder state changes from VoiceRecorder component
   function handleVoiceStateChange(state: 'idle' | 'recording' | 'processing') {
     console.log('[Learn] handleVoiceStateChange called with:', state, 'current voiceState:', voiceState)
+
+    // Pre-init AudioContext on first user gesture (recording start) so it's
+    // ready when audio chunks arrive — saves ~5-20ms per SSE request.
+    // Reference: https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API/Best_practices
+    if (state === 'recording') {
+      audioPlayerRef.current.ensureContext()
+    }
+
     // Map recorder states to voice states
     const mappedState: VoiceState = state === 'recording' ? 'listening' :
                                      state === 'processing' ? 'thinking' :

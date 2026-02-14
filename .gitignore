@@ -58,3 +58,6 @@ next-env.d.ts
 
 # OS
 Thumbs.db
+
+# Claude Code temporary files
+tmpclaude-*-cwd

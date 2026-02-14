@@ -4,10 +4,10 @@
 --
 -- CHANGELOG v3.0:
 -- - DRY: Shared pedagogy extracted into SQL variables (DO $$ block)
--- - C1: lessonComplete is now system-computed (agents report teachingPhase only)
 -- - C4: Response format simplified (Zod schema is the structural authority)
 -- - C5: ~4000 lines of duplicated boilerplate eliminated
 -- - All subject-specific content preserved per specialist
+-- - Agents determine lessonComplete (Phase 5 + mastery), MCQ assessment follows
 --
 -- BACKWARD COMPATIBILITY: Same schema and field structure.
 -- Only system_prompt content has been restructured.
@@ -165,7 +165,7 @@ DECLARE
     || E'- displayText: Written board notes with markdown (what you WRITE). No SVG code here.\n'
     || E'- svg: Full SVG diagram string, or null. SVG code goes ONLY here.\n'
     || E'- teachingPhase: Your current Teaching Progression phase (1-5). Report accurately.\n'
-    || E'- lessonComplete: Always false (system-computed from teachingPhase + mastery criteria).\n\n'
+    || E'- lessonComplete: Set to true ONLY when you have completed Phase 5 and the student has demonstrated complete mastery of ALL lesson objectives. Be strict - the student will take an MCQ assessment afterward to verify their understanding.\n\n'
     || E'TEACHING PHASE VALUES:\n'
     || E'1 = Hook & Activate\n'
     || E'2 = Direct Instruction ("I DO")\n'

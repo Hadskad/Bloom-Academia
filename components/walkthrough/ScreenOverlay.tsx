@@ -37,6 +37,17 @@ const SCREEN_DESCRIPTIONS: Partial<Record<WalkthroughStep, { title: string; desc
       '🔊 Natural voice responses (Google TTS)',
     ],
   },
+  'curriculum-builder': {
+    title: 'Curriculum Builder',
+    description: 'Non-technical users can design and manage curriculum without code. Build subjects, topics, and lessons with learning objectives and prerequisites.',
+    highlights: [
+      '📚 Create subjects with custom grade levels',
+      '📖 Build topics and lessons visually',
+      '🎯 Define learning objectives per lesson',
+      '🔗 Set prerequisites for lesson sequencing',
+      '✏️ No coding required - designed for educators',
+    ],
+  },
   'assessment-mode': {
     title: 'Assessment Mode',
     description: 'When the AI detects lesson mastery, it automatically triggers an assessment. MCQ questions verify understanding.',
@@ -165,11 +176,8 @@ export function ScreenOverlay() {
           nextStep();
         }, 100);
       } else {
-        // No action needed, navigate normally
-        if (nextRoute && pathname !== nextRoute) {
-          setNavigating(true);
-          router.push(nextRoute);
-        }
+        // No action needed, just advance step
+        // The useEffect at line 140-145 will handle navigation automatically
         nextStep();
       }
     }
@@ -217,6 +225,12 @@ export function ScreenOverlay() {
     return null;
   }
 
+  // Determine if this is a live class demo step (compact panel)
+  const isLiveClassDemo = currentStep === 'voice-learning' || currentStep === 'assessment-mode' || currentStep === 'assessment-results';
+
+  // Use compact layout for live class, expanded layout for other screens
+  const isCompactLayout = isLiveClassDemo;
+
   return (
     <>
       {/* Loading Overlay - Shows during screen transitions */}
@@ -232,38 +246,78 @@ export function ScreenOverlay() {
         </div>
       )}
 
-      {/* Bottom Panel - Compact for Live Screens */}
+      {/* Bottom Panel - Responsive sizing based on screen type */}
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t-2 border-primary shadow-2xl">
-        <div className="max-w-7xl mx-auto px-4 py-2">
-          {/* Compact Single Row */}
-          <div className="flex items-center justify-between gap-4">
-            {/* Left: Title + Description */}
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-bold text-gray-900 truncate">{stepInfo.title}</h3>
-              <p className="text-xs text-gray-600 truncate">{stepInfo.description}</p>
-            </div>
+        <div className="max-w-7xl mx-auto px-6 py-4">
+          {isCompactLayout ? (
+            /* Compact Single Row - For Live Class Demo */
+            <div className="flex items-center justify-between gap-4">
+              {/* Left: Title + Description */}
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-bold text-gray-900 truncate">{stepInfo.title}</h3>
+                <p className="text-xs text-gray-600 truncate">{stepInfo.description}</p>
+              </div>
 
-            {/* Center: Highlights */}
-            <div className="hidden md:flex gap-2 flex-shrink-0 max-w-md overflow-x-auto">
-              {stepInfo.highlights.slice(0, 3).map((highlight, index) => (
-                <span
-                  key={index}
-                  className="flex-shrink-0 px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded-full"
-                >
-                  {highlight}
-                </span>
-              ))}
-            </div>
+              {/* Center: Highlights */}
+              <div className="hidden md:flex gap-2 flex-shrink-0 max-w-md overflow-x-auto">
+                {stepInfo.highlights.slice(0, 3).map((highlight, index) => (
+                  <span
+                    key={index}
+                    className="flex-shrink-0 px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded-full"
+                  >
+                    {highlight}
+                  </span>
+                ))}
+              </div>
 
-            {/* Right: Next Button */}
-            <button
-              onClick={handleNext}
-              className="flex items-center gap-1 px-4 py-2 bg-primary hover:bg-blue-600 text-white rounded-lg font-medium transition-colors text-sm flex-shrink-0"
-            >
-              {isLastStep ? 'Finish' : 'Next'}
-              <ChevronRight size={16} />
-            </button>
-          </div>
+              {/* Right: Next Button */}
+              <button
+                onClick={handleNext}
+                className="flex items-center gap-1 px-4 py-2 bg-primary hover:bg-blue-600 text-white rounded-lg font-medium transition-colors text-sm flex-shrink-0"
+              >
+                {isLastStep ? 'Finish' : 'Next'}
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          ) : (
+            /* Expanded Layout - For Curriculum Builder & Other Screens */
+            <div className="space-y-4">
+              {/* Header Row */}
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-gray-900 mb-2">{stepInfo.title}</h3>
+                  <p className="text-sm text-gray-600 leading-relaxed">{stepInfo.description}</p>
+                </div>
+
+                {/* Navigation Buttons */}
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <span className="px-3 py-1 bg-gray-100 text-gray-700 text-sm font-medium rounded-full">
+                    {currentStepIndex + 1} / {WALKTHROUGH_STEPS.length}
+                  </span>
+                  <button
+                    onClick={handleNext}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-primary hover:bg-blue-600 text-white rounded-lg font-medium transition-colors"
+                  >
+                    {isLastStep ? 'Finish' : 'Next'}
+                    <ChevronRight size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Highlights Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {stepInfo.highlights.map((highlight, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-gray-700 text-sm rounded-lg border border-blue-100"
+                  >
+                    <span className="flex-shrink-0">{highlight.split(' ')[0]}</span>
+                    <span className="text-xs">{highlight.split(' ').slice(1).join(' ')}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

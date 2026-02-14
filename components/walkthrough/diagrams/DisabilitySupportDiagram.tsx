@@ -15,14 +15,14 @@ export function DisabilitySupportDiagram() {
         Disability Support Plan
       </text>
       <text x="400" y="55" textAnchor="middle" fill="#64748b" fontSize="12">
-        Inclusive Education: Current Features + Future Roadmap
+        Inclusive Education: Features in development + Future Roadmap
       </text>
 
       {/* Currently Implemented Section */}
       <g transform="translate(30, 75)">
         <rect width="355" height="210" rx="10" fill="#d1fae5" stroke="#10b981" strokeWidth="2" />
         <rect x="10" y="10" width="180" height="25" rx="6" fill="#10b981" />
-        <text x="100" y="28" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">✅ Currently Implemented</text>
+        <text x="100" y="28" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">✅ In Development</text>
 
         {/* Learning Disabilities */}
         <g transform="translate(15, 50)">
@@ -160,7 +160,7 @@ export function DisabilitySupportDiagram() {
         <rect width="740" height="100" rx="10" fill="#ede9fe" stroke="#8b5cf6" strokeWidth="2" />
         <text x="370" y="25" textAnchor="middle" fill="#5b21b6" fontSize="12" fontWeight="bold">🌍 Global Impact Vision</text>
         <text x="370" y="50" textAnchor="middle" fill="#6d28d9" fontSize="10">
-          Bloom Academia aims to make quality education accessible to ALL students worldwide,
+          Bloom Academia aims to make quality education accessible to ALL children worldwide,
         </text>
         <text x="370" y="68" textAnchor="middle" fill="#6d28d9" fontSize="10">
           regardless of physical or cognitive abilities. Every child deserves a personalized AI teacher.
