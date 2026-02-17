@@ -1,18 +1,20 @@
 /**
  * GET /api/stt/temp-key
  *
- * Generates a temporary Soniox API key for client-side speech-to-text usage.
- * Temporary keys expire after 1 hour (3600 seconds, max allowed by Soniox).
- * Keys are scoped for WebSocket transcription only.
+ * @deprecated This endpoint is no longer used. Audio is now sent directly to Gemini API
+ * for native audio processing instead of using a separate STT service.
  *
- * This prevents exposing the main Soniox API key to the client.
+ * LEGACY IMPLEMENTATION (Soniox-based):
+ * Previously generated temporary Soniox API keys for client-side speech-to-text.
+ * Temporary keys expired after 1 hour (3600 seconds, max allowed by Soniox).
+ * Keys were scoped for WebSocket transcription only.
  *
- * Response:
- * - api_key: Short-lived key for WebSocket connection
- * - expires_at: UTC timestamp when the key expires
+ * MIGRATION NOTE:
+ * - Old flow: Browser → Soniox STT → Gemini API → Google TTS
+ * - New flow: Browser MediaRecorder → Gemini API (native audio) → Google TTS
+ * - Audio is now captured as base64-encoded blobs and sent directly to Gemini
  *
- * Error Handling:
- * - 500: Failed to generate key
+ * This file is kept for reference only and can be removed in a future cleanup.
  *
  * Reference: https://soniox.com/docs/stt/api-reference/auth/create_temporary_api_key
  * Reference: https://soniox.com/docs/stt/SDKs/web-sdk

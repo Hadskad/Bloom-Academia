@@ -7,12 +7,17 @@
  * Lifespan: Permanent (across all sessions)
  * Purpose: Store fundamental user information and learning patterns
  *
- * ✅ OPTIMIZATION: In-memory caching for frequently accessed profiles
- * Expected improvement: 50-100ms → 0-5ms for cached profiles (20x faster)
+ * ✅ OPTIMIZATION (2026-02-15): Persistent cache using Next.js Data Cache
+ * - Replaced in-memory Map with unstable_cache (persists across serverless instances)
+ * - Cache survives function restarts and deployments
+ * - Expected improvement: 150ms → 5ms for cache hits (30x faster)
  *
- * Reference: Bloom_Academia_Backend.md - Section 5.1
+ * Reference: Next.js 15 unstable_cache API
+ * https://nextjs.org/docs/app/api-reference/functions/unstable_cache
  */
 
+import { unstable_cache } from 'next/cache';
+import { revalidateTag } from 'next/cache';
 import { supabase } from '@/lib/db/supabase'
 
 export interface UserProfile {
@@ -30,95 +35,62 @@ export interface UserProfile {
 }
 
 /**
- * In-memory cache for user profiles
+ * Fetch user profile from database with persistent caching
  *
- * Cache Strategy:
- * - TTL: 5 minutes (profiles don't change frequently)
- * - Max Size: 100 profiles (reasonable for MVP)
- * - Invalidation: On profile updates
+ * Uses Next.js Data Cache (unstable_cache) which persists across:
+ * - Serverless function invocations
+ * - Deployments
+ * - All instances (unlike in-memory Map which was instance-specific)
  *
- * References:
- * - Simple LRU-style cache with time-based expiration
- * - Reduces database queries by ~80% for active users
+ * Cache behavior:
+ * - Hit: ~5ms (instant)
+ * - Miss: ~150ms (Supabase query)
+ * - TTL: 300 seconds (5 minutes)
+ * - Invalidation: Via revalidateTag('profile')
+ *
+ * Reference: Next.js 15 unstable_cache
+ * https://nextjs.org/docs/app/api-reference/functions/unstable_cache
  */
-interface CacheEntry {
-  profile: UserProfile;
-  timestamp: number;
-}
+export const getUserProfile = unstable_cache(
+  async (userId: string): Promise<UserProfile> => {
+    console.log(`[Profile Cache] MISS - Fetching profile from DB for user ${userId.substring(0, 8)}`);
 
-const profileCache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const MAX_CACHE_SIZE = 100;
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single()
+
+    if (error) {
+      throw new Error(`Failed to fetch user profile: ${error.message}`)
+    }
+
+    console.log(`[Profile Cache] Cached profile for user ${userId.substring(0, 8)}`);
+    return data;
+  },
+  ['user-profile'], // Cache key prefix
+  {
+    revalidate: 300, // 5 minutes TTL (same as before)
+    tags: ['profile'] // Tag for global invalidation
+  }
+);
 
 /**
- * Clear cache entry for a specific user (called on updates)
+ * Invalidate cached profile across ALL serverless instances
  *
- * EXPORTED for use by profile-enricher.ts (Criterion 4: Real-time updates)
+ * Replaces old invalidateCache() which only cleared instance-local Map.
+ * Now uses revalidateTag() which purges cache globally.
+ *
+ * Called by:
+ * - profile-enricher.ts after profile updates
+ * - updateLearningStyle() and updateLearningPatterns() after mutations
+ *
+ * Reference: Next.js 15 revalidateTag (single-parameter form)
+ * https://nextjs.org/docs/app/api-reference/functions/revalidateTag
  */
 export function invalidateCache(userId: string): void {
-  profileCache.delete(userId);
-}
-
-/**
- * Clear expired cache entries
- */
-function cleanExpiredCache(): void {
-  const now = Date.now();
-  for (const [userId, entry] of profileCache.entries()) {
-    if (now - entry.timestamp > CACHE_TTL_MS) {
-      profileCache.delete(userId);
-    }
-  }
-}
-
-/**
- * Fetch user profile from database with caching
- *
- * ✅ OPTIMIZATION: Checks cache first before hitting database
- * Cache hit: 0-5ms, Cache miss: 50-100ms (normal DB query)
- */
-export async function getUserProfile(userId: string): Promise<UserProfile> {
-  // Check cache first
-  const cached = profileCache.get(userId);
-  const now = Date.now();
-
-  // Return cached profile if valid (not expired)
-  if (cached && (now - cached.timestamp < CACHE_TTL_MS)) {
-    return cached.profile;
-  }
-
-  // Cache miss or expired - fetch from database
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', userId)
-    .single()
-
-  if (error) {
-    throw new Error(`Failed to fetch user profile: ${error.message}`)
-  }
-
-  // Store in cache
-  profileCache.set(userId, {
-    profile: data,
-    timestamp: now
-  });
-
-  // Prevent cache from growing too large (simple LRU-style eviction)
-  if (profileCache.size > MAX_CACHE_SIZE) {
-    // Remove oldest entry
-    const firstKey = profileCache.keys().next().value;
-    if (firstKey) {
-      profileCache.delete(firstKey);
-    }
-  }
-
-  // Periodically clean expired entries (every 100 cache sets)
-  if (Math.random() < 0.01) {
-    cleanExpiredCache();
-  }
-
-  return data;
+  revalidateTag('profile');
+  console.log(`[Profile Cache] Invalidated globally for user ${userId.substring(0, 8)}`);
 }
 
 /**
@@ -138,8 +110,9 @@ export async function updateLearningStyle(
     throw new Error(`Failed to update learning style: ${error.message}`)
   }
 
-  // ✅ Invalidate cache after update
-  invalidateCache(userId);
+  // ✅ Invalidate cache globally after update
+  revalidateTag('profile');
+  console.log(`[Profile] Learning style updated for user ${userId.substring(0, 8)}, cache invalidated`);
 
   return data
 }
@@ -165,8 +138,9 @@ export async function updateLearningPatterns(
     throw new Error(`Failed to update learning patterns: ${error.message}`)
   }
 
-  // ✅ Invalidate cache after update
-  invalidateCache(userId);
+  // ✅ Invalidate cache globally after update
+  revalidateTag('profile');
+  console.log(`[Profile] Learning patterns updated for user ${userId.substring(0, 8)}, cache invalidated`);
 
   return data
 }

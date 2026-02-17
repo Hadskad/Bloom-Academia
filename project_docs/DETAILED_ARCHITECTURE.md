@@ -1554,7 +1554,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJxxx... (server-side only)
 GOOGLE_GENERATIVE_AI_API_KEY=AIzaSyxxx...
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 
-# Soniox STT
+# Gemini native audio STT
 NEXT_PUBLIC_SONIOX_API_KEY=xxx... (temp key generation)
 
 # Application

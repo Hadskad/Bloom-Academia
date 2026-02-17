@@ -12,7 +12,8 @@
       "Bash(npx eslint:*)",
       "WebFetch(domain:ai.google.dev)",
       "Bash(where:*)",
-      "Bash(npx next lint:*)"
+      "Bash(npx next lint:*)",
+      "Bash(npm test:*)"
     ]
   }
 }

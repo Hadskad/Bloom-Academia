@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:unit": "vitest run lib/**/__tests__",
+    "test:integration": "vitest run __tests__/integration --reporter=verbose"
   },
   "dependencies": {
     "@google-cloud/text-to-speech": "^6.4.0",

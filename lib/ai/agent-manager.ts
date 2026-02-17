@@ -194,15 +194,15 @@ export class AIAgentManager {
    */
   private getThinkingLevelForAgent(agentName: string): ThinkingLevel {
     switch (agentName) {
-      // HIGH thinking - Complex reasoning tasks
+      // MEDIUM thinking - Balanced tasks (reduced from HIGH for latency optimization)
+      // Performance data showed HIGH thinking causing 3-7s Gemini startup delays
+      // Reference: Performance logs 2026-02-14, MEMORY.md latency optimization
       case 'math_specialist':
-        return ThinkingLevel.HIGH; // Precise multi-step logical reasoning
+        return ThinkingLevel.MEDIUM; // Precise multi-step logical reasoning
       case 'english_specialist':
-        return ThinkingLevel.HIGH; // Nuanced language and literary analysis
+        return ThinkingLevel.MEDIUM; // Nuanced language and literary analysis
       case 'history_specialist':
-        return ThinkingLevel.HIGH; // Complex historical context and analysis
-
-      // MEDIUM thinking - Balanced tasks
+        return ThinkingLevel.MEDIUM; // Complex historical context and analysis
       case 'science_specialist':
         return ThinkingLevel.MEDIUM; // Inquiry-based conceptual understanding
       case 'assessor':
@@ -1982,15 +1982,9 @@ ${context.userProfile.struggles?.length ? `- Areas to improve: ${context.userPro
       }
     }
 
-    // Build lesson context (if available)
-    let lessonContext = '';
-    if (context.lessonContext) {
-      lessonContext = `
-CURRENT LESSON:
-- Title: ${context.lessonContext.title}
-- Subject: ${context.lessonContext.subject}
-- Objective: ${context.lessonContext.learning_objective}`;
-    }
+    // NOTE: Lesson context (title, subject, objective) is now in the Gemini cache
+    // (systemInstruction), so we don't need to include it in the dynamic prompt.
+    // This saves ~80 tokens per request and leverages the 90% cache discount.
 
     // Build handoff context
     let handoffContext = '';
@@ -2014,7 +2008,6 @@ CURRENT LESSON:
 ${studentContext}
 ${adaptiveContext}
 ${historyContext}
-${lessonContext}
 ${handoffContext}
 
 IMPORTANT: Respond using the structured JSON schema provided by the system.
@@ -2048,7 +2041,6 @@ Student (via voice):`;
 ${studentContext}
 ${adaptiveContext}
 ${historyContext}
-${lessonContext}
 ${handoffContext}
 
 IMPORTANT: Respond using the structured JSON schema provided by the system.
@@ -2121,7 +2113,9 @@ ${context.userProfile.struggles?.length ? `- Areas to improve: ${context.userPro
       }
     }
 
-    // Build lesson context (if available)
+    // NOTE: Lesson context (title, subject, objective) is now in the Gemini cache
+    // when cache is available. For fallback mode (cache unavailable), we include
+    // it here to maintain functionality.
     let lessonContext = '';
     if (context.lessonContext) {
       lessonContext = `

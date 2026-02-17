@@ -58,7 +58,7 @@ AI Orchestration	9-agent system (agent-manager.ts)	✅ Production-ready
 Database	Supabase (PostgreSQL + Auth)	✅ Complete schema
 Hosting	Vercel (serverless)	✅ Auto-deploy
 Backend	Next.js API Routes (serverless functions)	✅ Complete
-STT	Soniox WebSocket (@soniox/speech-to-text-web)	✅ Real-time
+STT	Gemini native audio WebSocket (@soniox/speech-to-text-web)	✅ Real-time
 TTS	Google Cloud TTS Neural2 Streaming	✅ Per-agent voices
 Memory	3-layer system (profile + session + enrichment)	✅ Real-time updates
 Analytics	Evidence extraction + mastery detection	✅ Rules-based
@@ -71,7 +71,7 @@ Grounding	Google Search (History/Science only)	✅ Source citations
 4.2 System Architecture
 Voice Interaction Flow:
 1.	Student speaks (Web Audio API captures audio)
-2.	Audio streams via WebSocket to Soniox STT API 
+2.	Audio streams via WebSocket to Gemini native audio STT API 
 o	Real-time transcription using @soniox/speech-to-text-web
 o	Model: stt-rt-preview with endpoint detection
 o	Returns transcribed text when student finishes speaking
@@ -103,13 +103,13 @@ Days 1-2: Landing Page
 
 Days 3-5: Voice Pipeline Integration
 Goal: Implement complete voice interaction system (STT → AI → TTS)
-Day 3: API Setup & Soniox Integration
+Day 3: API Setup & Gemini native audio Integration
 •	Set up all API credentials: 
 o	Gemini API key from Google AI Studio
-o	Soniox API key for speech-to-text
+o	Gemini native audio API key for speech-to-text
 o	Google Cloud service account for TTS
 o	Apply for hackathon credits (Gemini API)
-•	Implement Soniox WebSocket integration: 
+•	Implement Gemini native audio WebSocket integration: 
 o	Create /api/stt/temp-key endpoint for temporary API keys
 o	Build frontend audio capture using Web Audio API
 o	Integrate @soniox/speech-to-text-web SDK
@@ -132,7 +132,7 @@ o	Create TTS synthesis function (lib/tts/google-tts.ts)
 o	Configure Neural2 voice (en-US-Neural2-F)
 o	Test audio generation from text responses
 •	Test complete voice loop: 
-1.	Student speaks → Soniox transcribes
+1.	Student speaks → Gemini native audio transcribes
 2.	Text sent to Gemini 3 Flash → AI responds
 3.	Response converted to speech → Student hears
 4.	Interaction saved to memory system
@@ -257,7 +257,7 @@ Foundation/Grant Funded:
 **Model**: gemini-3-flash-preview (NO Live API - text-only)
 **Architecture**: 9 specialized agents with distinct roles
 **Connection**: REST API via @google/genai SDK (not WebSocket)
-**Latency**: 2-4 seconds (Soniox + Gemini + TTS pipeline)
+**Latency**: 2-4 seconds (Gemini native audio + Gemini + TTS pipeline)
 
 **Agent Roster:**
 1. **Coordinator** (thinking: LOW) - Routes to specialists

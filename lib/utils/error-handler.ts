@@ -79,7 +79,7 @@ export class NetworkError extends AppError {
 
 /**
  * External API error
- * Used when third-party API calls fail (Gemini, Soniox, etc.)
+ * Used when third-party API calls fail (Gemini, Google TTS, etc.)
  */
 export class ExternalAPIError extends AppError {
   constructor(service: string, message: string) {

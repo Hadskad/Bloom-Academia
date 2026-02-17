@@ -35,6 +35,8 @@ vi.mock('@/lib/analytics/agent-performance', () => ({
 
 vi.mock('@/lib/tts/google-tts', () => ({
   generateSpeech: vi.fn(() => Promise.resolve(Buffer.from('audio'))),
+  MAX_CHUNK_LENGTH: 200,  // ✅ Export constant used by progressive streaming
+  splitLongSentence: vi.fn((sentence: string) => [sentence]),  // ✅ Mock sentence splitting (returns as-is for tests)
 }))
 
 // GoogleGenAI mock – we replace the whole module so the constructor never

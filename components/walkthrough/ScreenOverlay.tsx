@@ -30,7 +30,7 @@ const SCREEN_DESCRIPTIONS: Partial<Record<WalkthroughStep, { title: string; desc
     title: 'Voice Learning Interface',
     description: 'This is where the magic happens. Students speak to their AI teacher and receive personalized instruction with real-time whiteboard visualizations.',
     highlights: [
-      '🎤 Microphone button for voice input (Soniox STT)',
+      '🎤 Microphone button for voice input (Gemini native audio)',
       '🧑‍🏫 Teacher avatar shows active AI agent',
       '📝 Conversation history with markdown support',
       '🎨 Dynamic SVG whiteboard for visual explanations',

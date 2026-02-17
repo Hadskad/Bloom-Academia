@@ -13,6 +13,7 @@
  * Reference: app/api/teach/multi-ai-stream/route.ts (original implementation)
  */
 
+import { unstable_cache } from 'next/cache';
 import { AIAgentManager } from '@/lib/ai/agent-manager';
 import { getUserProfile } from '@/lib/memory/profile-manager';
 import type { UserProfile } from '@/lib/memory/profile-manager';
@@ -29,59 +30,58 @@ import { enrichProfileIfNeeded } from '@/lib/memory/profile-enricher';
 import { getPendingCorrection } from '@/lib/ai/pending-corrections';
 import type { PendingCorrection } from '@/lib/ai/pending-corrections';
 
-// ─── In-Memory Lesson Cache ────────────────────────────────────────────────
+// ─── Persistent Lesson Cache ────────────────────────────────────────────────
 //
 // Lessons are static curriculum content — they don't change during a session.
-// Cache with a 30-minute TTL to avoid repeated DB queries across interactions.
+// Uses Next.js Data Cache (unstable_cache) which persists across serverless instances.
 //
-// Reference: Same caching pattern as lib/memory/profile-manager.ts
-
-interface LessonCacheEntry {
-  lesson: {
-    id: string;
-    title: string;
-    subject: string;
-    grade_level: number;
-    learning_objective: string;
-    [key: string]: any;
-  };
-  timestamp: number;
-}
-
-const lessonCache = new Map<string, LessonCacheEntry>();
-const LESSON_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+// ✅ OPTIMIZATION (2026-02-15): Replaced in-memory Map with unstable_cache
+// - Cache survives serverless function restarts
+// - Shared across all instances (unlike Map which was instance-specific)
+// - No invalidation needed (static curriculum content)
+//
+// Reference: Next.js 15 unstable_cache API
+// https://nextjs.org/docs/app/api-reference/functions/unstable_cache
 
 /**
- * Fetch lesson from cache or DB.
- * Caches the result for 30 minutes (lessons are static curriculum content).
+ * Fetch lesson from database with persistent caching
+ *
+ * Uses Next.js Data Cache which persists across:
+ * - Serverless function invocations
+ * - Deployments
+ * - All instances
+ *
+ * Cache behavior:
+ * - Hit: ~5ms (instant)
+ * - Miss: ~150ms (Supabase query)
+ * - TTL: 1800 seconds (30 minutes)
+ * - No invalidation needed (lessons are static curriculum)
+ *
+ * Reference: Next.js 15 unstable_cache
+ * https://nextjs.org/docs/app/api-reference/functions/unstable_cache
  */
-async function getCachedLesson(lessonId: string): Promise<{
-  data: LessonCacheEntry['lesson'] | null;
-  error: any;
-}> {
-  // Check cache
-  const cached = lessonCache.get(lessonId);
-  if (cached && Date.now() - cached.timestamp < LESSON_CACHE_TTL_MS) {
-    return { data: cached.lesson, error: null };
+const getCachedLesson = unstable_cache(
+  async (lessonId: string) => {
+    console.log(`[Lesson Cache] MISS - Fetching lesson from DB for ${lessonId.substring(0, 8)}`);
+
+    const result = await supabase
+      .from('lessons')
+      .select('*')
+      .eq('id', lessonId)
+      .single();
+
+    if (result.data) {
+      console.log(`[Lesson Cache] Cached lesson ${lessonId.substring(0, 8)}: ${result.data.title}`);
+    }
+
+    return result;
+  },
+  ['lesson'], // Cache key prefix
+  {
+    revalidate: 1800, // 30 minutes TTL (same as before)
+    tags: ['lesson'] // Tag for potential future invalidation
   }
-
-  // Cache miss — fetch from DB
-  const result = await supabase
-    .from('lessons')
-    .select('*')
-    .eq('id', lessonId)
-    .single();
-
-  // Cache successful result
-  if (!result.error && result.data) {
-    lessonCache.set(lessonId, {
-      lesson: result.data,
-      timestamp: Date.now()
-    });
-  }
-
-  return result;
-}
+);
 
 /**
  * Loaded teaching context — all data needed before generating a response
@@ -204,8 +204,39 @@ export function buildAgentContext(
   request: TeachingRequestData,
   adaptiveInstructions: string
 ): AgentContext {
-  // Prepend self-correction instructions if a pending correction exists
+  // Start with base adaptive instructions
   let finalInstructions = adaptiveInstructions;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TIER 1 OPTIMIZATION: Inject Current Mastery Score (Real-Time Adaptation)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // This enables mid-lesson difficulty adjustment based on real-time evidence.
+  // The agent can now SEE the current mastery score and adapt accordingly.
+  //
+  // Mastery status mapping:
+  // - 0-49%: Struggling (simplify, maximum scaffolding)
+  // - 50-79%: Learning (standard difficulty, balanced support)
+  // - 80-100%: Mastering (challenge mode, accelerate)
+  //
+  // Reference: MASTERY_LOOP_OPTIMIZATION.md - Tier 1, Fix #2
+  const masteryStatus =
+    ctx.currentMastery < 50 ? 'Struggling' :
+    ctx.currentMastery < 80 ? 'Learning' :
+    'Mastering';
+
+  const masteryBlock = [
+    `<current_mastery_level score="${ctx.currentMastery}" status="${masteryStatus}" />`,
+    ''
+  ].join('\n');
+
+  // Inject mastery BEFORE all other adaptive directives (highest priority)
+  finalInstructions = masteryBlock + finalInstructions;
+
+  console.log(`[teaching-helpers] Injected mastery: ${ctx.currentMastery}% (${masteryStatus})`);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Self-Correction Block (if validator rejected previous response)
+  // ═══════════════════════════════════════════════════════════════════════════
   if (ctx.pendingCorrection) {
     const correction = ctx.pendingCorrection;
     const correctionBlock = [
@@ -397,13 +428,34 @@ export function fireAndForgetSideEffects(params: {
     .catch((err) => console.error('[teaching-helpers] Failed to enrich profile:', err));
 
   // 5. Extract and record mastery evidence (Criterion 3)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TIER 1 OPTIMIZATION: Performance Logging for Evidence Extraction
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Verify that evidence extraction is actually working in production.
+  // Logs extraction results, confidence scores, and recording success/failure.
+  //
+  // Reference: MASTERY_LOOP_OPTIMIZATION.md - Tier 1, Fix #3
   if (messageForLogging !== '[Audio/Media input]' && aiResponse.displayText) {
+    const evidenceStartTime = Date.now();
+
     extractEvidenceQuality(
       messageForLogging,
       aiResponse.displayText,
       lessonTitle
     ).then((evidence) => {
+      const extractionTime = Date.now() - evidenceStartTime;
+
+      console.log(`[Evidence Extraction] Completed in ${extractionTime}ms:`, {
+        evidenceType: evidence.evidenceType,
+        qualityScore: evidence.qualityScore,
+        confidence: evidence.confidence,
+        threshold: 0.7,
+        willRecord: evidence.confidence > 0.7
+      });
+
       if (evidence.confidence > 0.7) {
+        console.log(`[Evidence Extraction] Recording evidence: ${evidence.evidenceType} (quality: ${evidence.qualityScore})`);
+
         return recordMasteryEvidence(
           userId,
           lessonId,
@@ -415,8 +467,18 @@ export function fireAndForgetSideEffects(params: {
             confidence: evidence.confidence,
             context: lessonTitle
           }
-        );
+        ).then(() => {
+          console.log(`[Evidence Extraction] Successfully recorded ${evidence.evidenceType} evidence`);
+        });
+      } else {
+        console.log(`[Evidence Extraction] Skipped recording (confidence ${evidence.confidence} < 0.7 threshold)`);
       }
-    }).catch((err) => console.error('[teaching-helpers] Failed to record mastery evidence:', err));
+    }).catch((err) => {
+      console.error('[teaching-helpers] Evidence extraction failed:', {
+        error: err.message,
+        userMessage: messageForLogging.substring(0, 100),
+        aiResponse: aiResponse.displayText.substring(0, 100)
+      });
+    });
   }
 }

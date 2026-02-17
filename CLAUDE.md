@@ -190,14 +190,15 @@ You're doing well if:
 
 **Technology Stack (Verified):**
 - Frontend: Next.js 15 (App Router), React, TypeScript
-- AI: Gemini 3 Flash (`gemini-3-flash-preview`)
-- STT: Soniox (`@soniox/speech-to-text-web`)
+- AI: Gemini 3 Flash (`gemini-3-flash-preview`) with native audio support
+- STT: Gemini native audio (base64-encoded audio sent directly to Gemini API)
 - TTS: Google Cloud TTS (`@google-cloud/text-to-speech`)
 - Database: Supabase (PostgreSQL with supabase-js v2)
 - Deployment: Vercel
 
 **Key Architectural Decisions:**
-- Voice pipeline: Soniox → Gemini 3 Flash → Google TTS (separate services)
+- Voice pipeline: Browser MediaRecorder → Gemini 3 Flash (native audio) → Google TTS
+- Audio is captured as base64-encoded blobs and sent directly to Gemini API
 - 3-layer memory system for personalization
 - SVG generation via Gemini (on-the-fly)
 - Next.js API routes for backend (serverless)

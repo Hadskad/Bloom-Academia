@@ -455,7 +455,7 @@ const validationResultSchema = z.object({
 
 **Traditional Pipeline** (STT → LLM → TTS):
 ```
-Audio → Transcription Service (Soniox/Whisper) → Text → LLM → Text → TTS → Audio
+Audio → Transcription Service (Gemini native audio/Whisper) → Text → LLM → Text → TTS → Audio
         [+200-500ms, +cost]
 ```
 

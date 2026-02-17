@@ -60,8 +60,7 @@ let currentProfile = {
 // The actual mock fn reference is grabbed via the import below.
 vi.mock('@/lib/memory/profile-manager', () => ({
   getUserProfile: vi.fn(() => Promise.resolve(currentProfile)),
-  // NOTE: invalidateCache is NOT exported – it's module-private.
-  // analyzeSessionLearning never calls it either.  That's the bug.
+  invalidateCache: vi.fn(),  // ✅ Mock cache invalidation function
 }))
 
 // Session history – minimal, content doesn't matter for unit tests
@@ -87,7 +86,7 @@ vi.mock('@google/genai', () => ({
 // ── import module under test ─────────────────────────────────────────────────
 import { analyzeSessionLearning } from '@/lib/memory/learning-analyzer'
 import { supabase } from '@/lib/db/supabase'
-import { getUserProfile } from '@/lib/memory/profile-manager'
+import { getUserProfile, invalidateCache } from '@/lib/memory/profile-manager'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function geminiReturns(analysis: Record<string, unknown>) {
@@ -315,17 +314,12 @@ describe('analyzeSessionLearning – DB update error handling', () => {
   })
 })
 
-describe('analyzeSessionLearning – cache invalidation gap (documented bug)', () => {
+describe('analyzeSessionLearning – cache invalidation', () => {
   /**
-   * analyzeSessionLearning writes the updated profile directly via
-   * supabase.from('users').update(…) but it never calls the profile-manager's
-   * cache-invalidation function.  This means that for up to 5 minutes after
-   * the update, getUserProfile will return STALE data from its in-memory cache.
-   *
-   * This test documents the bug by verifying the function does NOT import or
-   * call any invalidation helper.  When the bug is fixed, update this test.
+   * ✅ FIXED: analyzeSessionLearning now properly calls invalidateCache()
+   * after updating the profile, ensuring fresh data is loaded on next request.
    */
-  it('does not invalidate the profile-manager cache after writing', async () => {
+  beforeEach(() => {
     currentProfile = { ...currentProfile, strengths: [], struggles: [], preferences: {} }
 
     ;(supabase.from as any).mockReturnValue({
@@ -336,24 +330,22 @@ describe('analyzeSessionLearning – cache invalidation gap (documented bug)', (
       })),
     })
 
+    // Reset mock call count
+    vi.mocked(invalidateCache).mockClear()
+  })
+
+  it('invalidates the profile cache after updating', async () => {
     geminiReturns({
       learningStyle: 'visual',
-      newStrengths: ['new-topic'],
+      newStrengths: ['geometry'],
       newStruggles: [],
       preferredPace: 'medium',
     })
 
-    // Capture what getUserProfile returns BEFORE the analyze call
-    const profileBefore = await getUserProfile('user-1')
-    expect(profileBefore.strengths).toEqual([])
-
     await analyzeSessionLearning('user-1', 'session-1')
 
-    // getUserProfile mock still returns the SAME stale object – the real
-    // cached version in production would too, because invalidateCache was
-    // never called.  The DB was updated (capturedUpdate proves it) but the
-    // cache was not busted.
-    const profileAfter = await getUserProfile('user-1')
-    expect(profileAfter.strengths).toEqual([])  // stale – bug confirmed
+    // Verify cache was invalidated with correct userId
+    expect(invalidateCache).toHaveBeenCalledWith('user-1')
+    expect(invalidateCache).toHaveBeenCalledTimes(1)
   })
 })

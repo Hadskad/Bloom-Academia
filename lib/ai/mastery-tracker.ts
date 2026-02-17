@@ -16,61 +16,47 @@
  * Reference: lib/kernel/mastery-detector.ts - Evidence tracking system
  */
 
+import { unstable_cache } from 'next/cache';
+import { revalidateTag } from 'next/cache';
 import { supabase } from '@/lib/db/supabase';
 
-// ─── In-Memory Mastery Cache ────────────────────────────────────────────────
+// ─── Persistent Mastery Cache ────────────────────────────────────────────────
 //
-// Same caching pattern used by profile-manager.ts (5-min TTL, Map-based).
-// Mastery levels rarely change within a session — typically only when new
-// evidence is recorded via recordMasteryEvidence(). On update, the cache is
-// invalidated AND re-populated so the next read is instant.
+// Uses Next.js Data Cache (unstable_cache) which persists across serverless instances.
+// Mastery levels change when new evidence is recorded via recordMasteryEvidence().
+// On update, the cache is invalidated globally via revalidateTag().
 //
-// Reference: lib/memory/profile-manager.ts (cache pattern)
-
-interface MasteryCacheEntry {
-  level: number;
-  timestamp: number;
-}
-
-const masteryCache = new Map<string, MasteryCacheEntry>();
-const MASTERY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-/** Build cache key from userId + lessonId */
-function masteryCacheKey(userId: string, lessonId: string): string {
-  return `${userId}:${lessonId}`;
-}
+// ✅ OPTIMIZATION (2026-02-15): Replaced in-memory Map with unstable_cache
+// - Cache survives serverless function restarts
+// - Shared across all instances
+// - Global invalidation via revalidateTag('mastery')
+//
+// Reference: Next.js 15 unstable_cache API
+// https://nextjs.org/docs/app/api-reference/functions/unstable_cache
 
 /**
- * Invalidate cached mastery level for a specific user+lesson.
+ * Invalidate cached mastery level globally for all user+lesson combinations.
  * Called by mastery-detector.ts after recording new evidence.
+ *
+ * Note: This invalidates ALL mastery cache entries (not just one user+lesson)
+ * because Next.js tags apply to the entire cache key prefix.
  */
 export function invalidateMasteryCache(userId: string, lessonId: string): void {
-  masteryCache.delete(masteryCacheKey(userId, lessonId));
+  revalidateTag('mastery');
+  console.log(`[Mastery Cache] Invalidated globally for user ${userId.substring(0, 8)}, lesson ${lessonId.substring(0, 8)}`);
 }
 
 /**
  * Invalidate and immediately re-cache the mastery level.
- * Ensures the next read hits cache instead of DB.
+ * Ensures the next read gets fresh data.
  */
 export async function refreshMasteryCache(userId: string, lessonId: string): Promise<void> {
-  invalidateMasteryCache(userId, lessonId);
-  // Re-fetch and cache — getCurrentMasteryLevel checks cache first,
-  // but since we just invalidated, it will hit DB and populate cache.
-  await getCurrentMasteryLevel(userId, lessonId);
-}
-
-/** Remove expired entries from cache */
-function cleanExpiredMasteryCache(): void {
-  const now = Date.now();
-  for (const [key, entry] of masteryCache.entries()) {
-    if (now - entry.timestamp > MASTERY_CACHE_TTL_MS) {
-      masteryCache.delete(key);
-    }
-  }
+  revalidateTag('mastery');
+  console.log(`[Mastery Cache] Refreshed globally (will re-fetch on next request)`);
 }
 
 /**
- * Gets student's current mastery level for a specific lesson
+ * Gets student's current mastery level for a specific lesson (with persistent caching)
  *
  * Algorithm:
  * 1. Check mastery_evidence table for evidence-based calculation
@@ -79,135 +65,119 @@ function cleanExpiredMasteryCache(): void {
  * 2. Fallback to progress table's mastery_level field
  * 3. Default to 50 (neutral) if no data exists
  *
+ * Cache behavior:
+ * - Hit: ~5ms (instant)
+ * - Miss: ~100ms (Supabase queries)
+ * - TTL: 300 seconds (5 minutes)
+ * - Invalidation: Via revalidateTag('mastery')
+ *
  * @param userId - Student's unique identifier
  * @param lessonId - Lesson's unique identifier
  * @returns Mastery level 0-100 (percentage)
  *
- * @example
- * ```typescript
- * const mastery = await getCurrentMasteryLevel(userId, lessonId);
- * // Returns: 75 (student is 75% proficient)
- *
- * // Use for difficulty adaptation:
- * if (mastery < 50) {
- *   // Simplify teaching
- * } else if (mastery > 80) {
- *   // Challenge the student
- * }
- * ```
+ * Reference: Next.js 15 unstable_cache
+ * https://nextjs.org/docs/app/api-reference/functions/unstable_cache
  */
-export async function getCurrentMasteryLevel(
-  userId: string,
-  lessonId: string
-): Promise<number> {
-  // Check cache first (0ms vs ~50-100ms DB query)
-  const cacheKey = masteryCacheKey(userId, lessonId);
-  const cached = masteryCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < MASTERY_CACHE_TTL_MS) {
-    return cached.level;
-  }
+export const getCurrentMasteryLevel = unstable_cache(
+  async (userId: string, lessonId: string): Promise<number> => {
+    console.log(`[Mastery Cache] MISS - Calculating mastery for user ${userId.substring(0, 8)}, lesson ${lessonId.substring(0, 8)}`);
 
-  // Periodically clean expired entries
-  if (masteryCache.size > 50) {
-    cleanExpiredMasteryCache();
-  }
+    try {
+      // ═══════════════════════════════════════════════════════════
+      // METHOD 1: Calculate from mastery_evidence (most accurate)
+      // ═══════════════════════════════════════════════════════════
 
-  try {
-    // ═══════════════════════════════════════════════════════════
-    // METHOD 1: Calculate from mastery_evidence (most accurate)
-    // ═══════════════════════════════════════════════════════════
+      // Reference: https://supabase.com/docs/reference/javascript/select
+      const { data: evidenceData, error: evidenceError } = await supabase
+        .from('mastery_evidence')
+        .select('evidence_type, metadata')
+        .eq('user_id', userId)
+        .eq('lesson_id', lessonId);
 
-    // Reference: https://supabase.com/docs/reference/javascript/select
-    const { data: evidenceData, error: evidenceError } = await supabase
-      .from('mastery_evidence')
-      .select('evidence_type, metadata')
-      .eq('user_id', userId)
-      .eq('lesson_id', lessonId);
+      if (!evidenceError && evidenceData && evidenceData.length > 0) {
+        // Count correct vs incorrect answers
+        const correctAnswers = evidenceData.filter(
+          e => e.evidence_type === 'correct_answer'
+        ).length;
 
-    // Helper: cache and return a mastery level
-    function cacheAndReturn(level: number): number {
-      masteryCache.set(cacheKey, { level, timestamp: Date.now() });
-      return level;
-    }
+        const incorrectAnswers = evidenceData.filter(
+          e => e.evidence_type === 'incorrect_answer'
+        ).length;
 
-    if (!evidenceError && evidenceData && evidenceData.length > 0) {
-      // Count correct vs incorrect answers
-      const correctAnswers = evidenceData.filter(
-        e => e.evidence_type === 'correct_answer'
-      ).length;
+        const totalAnswers = correctAnswers + incorrectAnswers;
 
-      const incorrectAnswers = evidenceData.filter(
-        e => e.evidence_type === 'incorrect_answer'
-      ).length;
+        if (totalAnswers > 0) {
+          const masteryPercentage = Math.round((correctAnswers / totalAnswers) * 100);
 
-      const totalAnswers = correctAnswers + incorrectAnswers;
+          console.log(`[Mastery Tracker] Evidence-based calculation for lesson ${lessonId.substring(0, 8)}:`, {
+            correct: correctAnswers,
+            incorrect: incorrectAnswers,
+            mastery: masteryPercentage
+          });
 
-      if (totalAnswers > 0) {
-        const masteryPercentage = Math.round((correctAnswers / totalAnswers) * 100);
+          return masteryPercentage;
+        }
 
-        console.log(`[Mastery Tracker] Evidence-based calculation for lesson ${lessonId.substring(0, 8)}:`, {
-          correct: correctAnswers,
-          incorrect: incorrectAnswers,
-          mastery: masteryPercentage
-        });
+        // Evidence exists but no correct/incorrect answers yet
+        // Check if there are quality scores from explanations/applications
+        const qualityScores = evidenceData
+          .map(e => e.metadata?.quality_score)
+          .filter((score): score is number => typeof score === 'number' && score > 0);
 
-        return cacheAndReturn(masteryPercentage);
+        if (qualityScores.length > 0) {
+          const avgQuality = Math.round(
+            qualityScores.reduce((a, b) => a + b, 0) / qualityScores.length
+          );
+
+          console.log(`[Mastery Tracker] Quality-based calculation for lesson ${lessonId.substring(0, 8)}:`, {
+            avgQuality,
+            sampleSize: qualityScores.length
+          });
+
+          return avgQuality;
+        }
       }
 
-      // Evidence exists but no correct/incorrect answers yet
-      // Check if there are quality scores from explanations/applications
-      const qualityScores = evidenceData
-        .map(e => e.metadata?.quality_score)
-        .filter((score): score is number => typeof score === 'number' && score > 0);
+      // ═══════════════════════════════════════════════════════════
+      // METHOD 2: Fallback to progress table
+      // ═══════════════════════════════════════════════════════════
 
-      if (qualityScores.length > 0) {
-        const avgQuality = Math.round(
-          qualityScores.reduce((a, b) => a + b, 0) / qualityScores.length
-        );
+      const { data: progressData, error: progressError } = await supabase
+        .from('progress')
+        .select('mastery_level')
+        .eq('user_id', userId)
+        .eq('lesson_id', lessonId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
 
-        console.log(`[Mastery Tracker] Quality-based calculation for lesson ${lessonId.substring(0, 8)}:`, {
-          avgQuality,
-          sampleSize: qualityScores.length
+      if (!progressError && progressData?.mastery_level !== undefined) {
+        console.log(`[Mastery Tracker] Progress table fallback for lesson ${lessonId.substring(0, 8)}:`, {
+          mastery: progressData.mastery_level
         });
 
-        return cacheAndReturn(avgQuality);
+        return progressData.mastery_level;
       }
+
+      // ═══════════════════════════════════════════════════════════
+      // METHOD 3: Default to 50 (neutral assumption)
+      // ═══════════════════════════════════════════════════════════
+
+      console.log(`[Mastery Tracker] No data found for lesson ${lessonId.substring(0, 8)}, defaulting to 50 (neutral)`);
+      return 50;
+
+    } catch (error) {
+      console.error('[Mastery Tracker] Error getting mastery level:', error);
+      // Return neutral default on error to prevent blocking
+      return 50;
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // METHOD 2: Fallback to progress table
-    // ═══════════════════════════════════════════════════════════
-
-    const { data: progressData, error: progressError } = await supabase
-      .from('progress')
-      .select('mastery_level')
-      .eq('user_id', userId)
-      .eq('lesson_id', lessonId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (!progressError && progressData?.mastery_level !== undefined) {
-      console.log(`[Mastery Tracker] Progress table fallback for lesson ${lessonId.substring(0, 8)}:`, {
-        mastery: progressData.mastery_level
-      });
-
-      return cacheAndReturn(progressData.mastery_level);
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // METHOD 3: Default to 50 (neutral assumption)
-    // ═══════════════════════════════════════════════════════════
-
-    console.log(`[Mastery Tracker] No data found for lesson ${lessonId.substring(0, 8)}, defaulting to 50 (neutral)`);
-    return cacheAndReturn(50);
-
-  } catch (error) {
-    console.error('[Mastery Tracker] Error getting mastery level:', error);
-    // Return neutral default on error to prevent blocking
-    return 50;
+  },
+  ['mastery'], // Cache key prefix
+  {
+    revalidate: 300, // 5 minutes TTL (same as before)
+    tags: ['mastery'] // Tag for global invalidation
   }
-}
+);
 
 /**
  * Gets average mastery across all lessons for a student

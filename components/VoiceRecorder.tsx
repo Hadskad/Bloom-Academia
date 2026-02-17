@@ -2,12 +2,13 @@
  * VoiceRecorder Component
  *
  * Records audio from microphone and returns base64-encoded audio data.
- * Replaces Soniox-based transcription with direct audio capture for Gemini API.
+ * Audio is sent directly to Gemini API for native audio processing (no separate STT service).
  *
  * Features:
  * - Browser MediaRecorder API for audio capture
  * - Converts audio blob to base64 for API transmission
  * - Visual feedback (animated while recording)
+ * - Voice Activity Detection (VAD) for auto-stop after 2s silence
  * - Manual stop control (user clicks when done)
  * - Error handling for permissions and recording
  *

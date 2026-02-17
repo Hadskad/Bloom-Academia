@@ -73,7 +73,7 @@ export function FinalCTA() {
 
             {/* Small Text Below */}
             <p className="text-sm text-gray-600 mt-6">
-              No sign-up required (as per hackathon requirement). See how it all works.
+              
             </p>
 
             {/* Decorative Element */}

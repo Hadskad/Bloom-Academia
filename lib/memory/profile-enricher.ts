@@ -17,7 +17,7 @@
  */
 
 import { supabase } from '@/lib/db/supabase'
-import { invalidateCache as invalidateProfileCache } from './profile-manager'
+import { revalidateTag } from 'next/cache'
 
 /**
  * Evidence pattern detected from recent interactions
@@ -238,11 +238,11 @@ export async function enrichProfileIfNeeded(
       profileUpdated = true
     }
 
-    // 3. Invalidate cache if profile was updated
+    // 3. Invalidate cache globally if profile was updated
     if (profileUpdated) {
-      invalidateProfileCache(userId)
+      revalidateTag('profile')
       console.log(
-        `[profile-enricher] Profile enriched for user ${userId}:`,
+        `[profile-enricher] Profile enriched for user ${userId}, cache invalidated:`,
         {
           struggles: patterns.newStruggles,
           strengths: patterns.newStrengths,

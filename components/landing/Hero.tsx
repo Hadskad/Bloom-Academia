@@ -39,12 +39,6 @@ export function Hero() {
 
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-            <Link
-              href={enrollUrl}
-              className="bg-primary hover:bg-blue-600 text-white font-semibold px-8 py-4 rounded-lg text-lg transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-            >
-              Enroll Now
-            </Link>
             <button
               onClick={() => {
                 document.getElementById('problem-section')?.scrollIntoView({ behavior: 'smooth' });

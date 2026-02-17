@@ -79,6 +79,38 @@ async function loadAllAgents(): Promise<AIAgent[]> {
 }
 
 /**
+ * Load lesson metadata (context) from database
+ *
+ * Fetches basic lesson information (title, subject, learning_objective).
+ * This metadata provides context about what the lesson covers.
+ *
+ * Reference: https://supabase.com/docs/reference/javascript/v1/single
+ *
+ * @param lessonId - UUID of the lesson
+ * @returns Lesson metadata object or null if not found
+ */
+async function loadLessonMetadata(lessonId: string): Promise<{ title: string; subject: string; learning_objective: string } | null> {
+  const { data, error } = await supabase
+    .from('lessons')
+    .select('title, subject, learning_objective')
+    .eq('id', lessonId)
+    .single();
+
+  if (error) {
+    console.warn(`[Cache] No lesson metadata found for ${lessonId.substring(0, 8)}:`, error.message);
+    return null;
+  }
+
+  if (!data) {
+    console.warn(`[Cache] Lesson metadata is empty for ${lessonId.substring(0, 8)}`);
+    return null;
+  }
+
+  console.log(`[Cache] ✓ Loaded lesson metadata: ${data.title}`);
+  return data;
+}
+
+/**
  * Load lesson curriculum from database
  *
  * Fetches the detailed teaching curriculum for a specific lesson.
@@ -112,14 +144,22 @@ async function loadLessonCurriculum(lessonId: string): Promise<string | null> {
 }
 
 /**
- * Build combined system instruction from agent prompts and lesson curriculum
+ * Build combined system instruction from agent prompts, lesson context, and curriculum
  *
  * Creates a single text block containing:
- * 1. Lesson curriculum (if provided) - detailed teaching plan at the top
- * 2. Agent system prompts for a specific model, separated by identifiers
+ * 1. Lesson context (if provided) - metadata (title, subject, objective)
+ * 2. Lesson curriculum (if provided) - detailed teaching plan
+ * 3. Agent system prompts for a specific model, separated by identifiers
  *
  * Format:
  * ```
+ * ═══════════════════════════════════════════
+ * CURRENT LESSON
+ * ═══════════════════════════════════════════
+ * Title: Introduction to Algebra
+ * Subject: math
+ * Learning Objective: Understand basic algebraic concepts
+ *
  * ═══════════════════════════════════════════
  * LESSON CURRICULUM (Follow this plan exactly)
  * ═══════════════════════════════════════════
@@ -139,17 +179,32 @@ async function loadLessonCurriculum(lessonId: string): Promise<string | null> {
  *
  * @param agents - Array of agents to cache
  * @param modelId - Model ID these agents use
+ * @param lessonMetadata - Optional lesson metadata (title, subject, objective)
  * @param curriculum - Optional lesson curriculum content
  * @returns Combined system instruction text
  */
 function buildCombinedSystemInstruction(
   agents: AIAgent[],
   modelId: string,
+  lessonMetadata: { title: string; subject: string; learning_objective: string } | null = null,
   curriculum: string | null = null
 ): string {
   const sections: string[] = [];
 
-  // Add curriculum at the top if available (highest priority context)
+  // Add lesson context at the top if available (basic metadata)
+  if (lessonMetadata) {
+    sections.push(
+      '═══════════════════════════════════════════',
+      'CURRENT LESSON',
+      '═══════════════════════════════════════════',
+      `Title: ${lessonMetadata.title}`,
+      `Subject: ${lessonMetadata.subject}`,
+      `Learning Objective: ${lessonMetadata.learning_objective}`,
+      ''
+    );
+  }
+
+  // Add curriculum if available (detailed teaching plan)
   if (curriculum) {
     sections.push(
       '═══════════════════════════════════════════',
@@ -157,7 +212,13 @@ function buildCombinedSystemInstruction(
       '═══════════════════════════════════════════',
       '',
       curriculum,
-      '',
+      ''
+    );
+  }
+
+  // Add separator before agent prompts
+  if (lessonMetadata || curriculum) {
+    sections.push(
       '═══════════════════════════════════════════',
       'AI AGENT SYSTEM PROMPTS',
       '═══════════════════════════════════════════',
@@ -182,12 +243,14 @@ function buildCombinedSystemInstruction(
  *
  * @param agents - Array of agents to cache
  * @param modelId - Model ID to use for this cache
+ * @param lessonMetadata - Optional lesson metadata (title, subject, objective)
  * @param curriculum - Optional lesson curriculum content to include in cache
  * @returns Created cached content
  */
 async function createCacheForModel(
   agents: AIAgent[],
   modelId: string,
+  lessonMetadata: { title: string; subject: string; learning_objective: string } | null = null,
   curriculum: string | null = null
 ): Promise<CachedContent> {
   const ai = getAIClient();
@@ -196,10 +259,10 @@ async function createCacheForModel(
     throw new Error(`No agents to cache for model ${modelId}`);
   }
 
-  const combinedInstruction = buildCombinedSystemInstruction(agents, modelId, curriculum);
+  const combinedInstruction = buildCombinedSystemInstruction(agents, modelId, lessonMetadata, curriculum);
 
   const tokenEstimate = Math.round(combinedInstruction.length / 4);
-  console.log(`[Cache] Creating ${modelId} cache with ${agents.length} agents${curriculum ? ' + curriculum' : ''} (~${tokenEstimate} tokens)`);
+  console.log(`[Cache] Creating ${modelId} cache with ${agents.length} agents${lessonMetadata ? ' + lesson context' : ''}${curriculum ? ' + curriculum' : ''} (~${tokenEstimate} tokens)`);
 
   try {
     // Create cache using verified API signature
@@ -264,12 +327,16 @@ async function renewCache(cacheName: string, modelId: string): Promise<CachedCon
  * or renews them if approaching expiration.
  * Uses singleton pattern to ensure only one warmup runs at a time.
  *
- * NOW INCLUDES LESSON CURRICULUM: If lessonId is provided, loads the detailed
- * curriculum and includes it in the cache for immediate access by specialists.
+ * NOW INCLUDES LESSON CONTEXT + CURRICULUM: If lessonId is provided, loads both:
+ * 1. Lesson metadata (title, subject, learning_objective) — ~80 tokens
+ * 2. Detailed curriculum (6-part teaching plan) — ~5,000-8,000 tokens
+ *
+ * Both are included in the cache for immediate access by specialists, achieving
+ * 90% cost savings on these tokens for all subsequent requests in the session.
  *
  * Called from: app/api/sessions/start/route.ts (non-blocking)
  *
- * @param lessonId - Optional lesson ID to include curriculum in cache
+ * @param lessonId - Optional lesson ID to include context + curriculum in cache
  */
 export async function warmupAllCaches(lessonId?: string): Promise<void> {
   // Singleton pattern: only run one warmup at a time
@@ -281,9 +348,10 @@ export async function warmupAllCaches(lessonId?: string): Promise<void> {
     try {
       const now = Date.now();
 
-      // Load agents and curriculum in parallel if lessonId provided
-      const [agents, curriculum] = await Promise.all([
+      // Load agents, lesson metadata, and curriculum in parallel if lessonId provided
+      const [agents, lessonMetadata, curriculum] = await Promise.all([
         loadAllAgents(),
+        lessonId ? loadLessonMetadata(lessonId) : Promise.resolve(null),
         lessonId ? loadLessonCurriculum(lessonId) : Promise.resolve(null)
       ]);
 
@@ -292,7 +360,7 @@ export async function warmupAllCaches(lessonId?: string): Promise<void> {
       const proAgents = agents.filter(a => a.model === PRO_MODEL_ID);
 
       // Warmup Flash cache (8 agents: coordinator + 5 specialists + assessor + motivator)
-      // NOW INCLUDES CURRICULUM if lessonId was provided
+      // NOW INCLUDES LESSON CONTEXT + CURRICULUM if lessonId was provided
       if (flashAgents.length > 0) {
         if (flashCachedContent && (now - flashLastUpdate) < RENEWAL_THRESHOLD_MS) {
           console.log(`[Cache] Flash cache still fresh (${Math.round((now - flashLastUpdate) / 60000)}min old), skipping warmup`);
@@ -304,20 +372,20 @@ export async function warmupAllCaches(lessonId?: string): Promise<void> {
             flashLastUpdate = now;
           } catch (renewError) {
             console.warn('[Cache] Flash renewal failed, recreating:', renewError);
-            const cache = await createCacheForModel(flashAgents, FLASH_MODEL_ID, curriculum);
+            const cache = await createCacheForModel(flashAgents, FLASH_MODEL_ID, lessonMetadata, curriculum);
             flashCachedContent = cache;
             flashLastUpdate = now;
           }
         } else {
           // Create new cache
-          const cache = await createCacheForModel(flashAgents, FLASH_MODEL_ID, curriculum);
+          const cache = await createCacheForModel(flashAgents, FLASH_MODEL_ID, lessonMetadata, curriculum);
           flashCachedContent = cache;
           flashLastUpdate = now;
         }
       }
 
       // Warmup Pro cache (1 agent: validator)
-      // Validator doesn't need curriculum (only validates responses, doesn't teach)
+      // Validator doesn't need lesson context or curriculum (only validates responses, doesn't teach)
       if (proAgents.length > 0) {
         if (proCachedContent && (now - proLastUpdate) < RENEWAL_THRESHOLD_MS) {
           console.log(`[Cache] Pro cache still fresh (${Math.round((now - proLastUpdate) / 60000)}min old), skipping warmup`);

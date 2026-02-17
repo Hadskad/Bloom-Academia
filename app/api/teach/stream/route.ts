@@ -42,6 +42,7 @@ import {
   fireAndForgetSideEffects
 } from '@/lib/ai/teaching-helpers';
 import { savePendingCorrection, markCorrectionDelivered } from '@/lib/ai/pending-corrections';
+import { PerformanceLogger } from '@/lib/utils/performance-logger';
 
 // Force dynamic rendering — SSE must not be cached
 // Reference: https://nextjs.org/docs/app/api-reference/file-conventions/route-segment-config
@@ -116,6 +117,11 @@ export async function POST(request: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      // Performance tracking for this request
+      const perf = new PerformanceLogger(sessionId);
+      perf.mark('backend_request_start', { hasAudio: !!requestAudioBase64, hasMedia: !!requestMediaBase64 });
+      const startTime = Date.now();
+
       /** Send an SSE event to the client */
       function send(event: string, data: Record<string, any>) {
         try {
@@ -127,21 +133,31 @@ export async function POST(request: NextRequest) {
 
       try {
         // --- Phase 1: Load context (parallel) ---
+        perf.mark('phase1_context_loading_start');
         const agentManager = new AIAgentManager();
 
         const ctx = await loadTeachingContext(userId, sessionId, lessonId, agentManager);
+        perf.mark('phase1_context_loading_complete', {
+          profile: !!ctx.profile,
+          lesson: !!ctx.lesson,
+          mastery: ctx.currentMastery
+        });
 
         // --- Phase 2: Generate adaptive directives ---
+        perf.mark('phase2_adaptive_directives_start');
         const { directives: adaptiveDirectives, instructions: adaptiveInstructions } =
           buildAdaptiveTeachingDirectives(ctx.profile, ctx.recentHistory, ctx.currentMastery);
+
+        const directiveCount = adaptiveDirectives.styleAdjustments.length +
+                               adaptiveDirectives.difficultyAdjustments.length +
+                               adaptiveDirectives.scaffoldingNeeds.length;
+        perf.mark('phase2_adaptive_directives_complete', { mastery: ctx.currentMastery, directiveCount });
 
         console.log('[SSE] Adaptive directives generated:', {
           userId: userId.substring(0, 8),
           lessonId: lessonId.substring(0, 8),
           mastery: ctx.currentMastery,
-          directiveCount: adaptiveDirectives.styleAdjustments.length +
-                          adaptiveDirectives.difficultyAdjustments.length +
-                          adaptiveDirectives.scaffoldingNeeds.length
+          directiveCount
         });
 
         const context = buildAgentContext(ctx, {
@@ -152,6 +168,7 @@ export async function POST(request: NextRequest) {
           mediaMimeType: requestMediaMimeType,
           mediaType: requestMediaType
         }, adaptiveInstructions);
+        perf.mark('phase2_context_built');
 
         // --- Phase 3: Handle AUTO_START ---
         if (userMessage && userMessage.startsWith('[AUTO_START]')) {
@@ -225,9 +242,11 @@ export async function POST(request: NextRequest) {
         }
 
         // --- Phase 4: Routing ---
+        perf.mark('phase4_routing_start');
         const routing = await resolveSpecialist(
           agentManager, userMessage, context, ctx.activeSpecialist, ctx.lesson
         );
+        perf.mark('phase4_routing_complete', { targetAgent: routing.agentName });
 
         // Coordinator handled directly (short response, no specialist needed)
         if (routing.coordinatorDirectResponse) {
@@ -250,11 +269,13 @@ export async function POST(request: NextRequest) {
         }
 
         // --- Phase 5: Get specialist response with progressive per-sentence TTS ---
+        perf.mark('phase5_specialist_response_start', { specialist: routing.agentName });
         console.log(`[SSE] Getting response from ${routing.agentName}`);
 
         let aiResponse: AgentResponse;
         // Progressive TTS: fire per-sentence during Gemini streaming
         const sentenceTTSPromises: Array<{ promise: Promise<Buffer | null>; sentence: string }> = [];
+        let firstSentenceFired = false;
 
         try {
           aiResponse = await agentManager.getAgentResponseStreamingWithSentenceCallbacks(
@@ -266,6 +287,10 @@ export async function POST(request: NextRequest) {
             },
             (sentence, index) => {
               // Each sentence fires TTS immediately during streaming
+              if (!firstSentenceFired) {
+                perf.mark('phase5_first_sentence_extracted');
+                firstSentenceFired = true;
+              }
               console.log(`[SSE] Sentence ${index} TTS fired at T+${Date.now() - startTime}ms`);
               const chunks = sentence.length > MAX_CHUNK_LENGTH
                 ? splitLongSentence(sentence)
@@ -282,6 +307,7 @@ export async function POST(request: NextRequest) {
               }
             }
           );
+          perf.mark('phase5_gemini_streaming_complete', { sentenceCount: sentenceTTSPromises.length });
         } catch (streamingError) {
           // Fallback to non-streaming
           console.warn(`[SSE] Streaming failed for ${routing.agentName}, falling back to non-streaming:`, streamingError);
@@ -300,7 +326,64 @@ export async function POST(request: NextRequest) {
           aiResponse.handoffMessage = routing.handoffMessage;
         }
 
-        const routingReason = `${routing.routingReason} (SSE stream)`;
+        let routingReason = `${routing.routingReason} (SSE stream)`;
+
+        // --- Phase 5b: Handle specialist handoffRequest (e.g., to motivator) ---
+        // Supports handoff chains: specialist → motivator → specialist (rare but possible)
+        // Prevents infinite loops with max 3 handoffs per request
+        const handoffChain: string[] = [aiResponse.agentName];
+        let currentResponse = aiResponse;
+        let maxHandoffs = 3;  // Prevent infinite loops
+
+        while (currentResponse.handoffRequest && maxHandoffs > 0) {
+          const targetAgent = currentResponse.handoffRequest;
+          const fromAgent = currentResponse.agentName;
+
+          console.log(`[SSE] Handoff chain: ${fromAgent} → ${targetAgent}`);
+
+          try {
+            // Get response from handoff target (non-streaming for simplicity)
+            // Handoffs are rare, so we prioritize correctness over streaming performance
+            const handoffResponse = await agentManager.getAgentResponse(
+              targetAgent,
+              userMessage || '',
+              {
+                ...context,
+                previousAgent: fromAgent  // Critical: set to the agent who requested handoff
+              }
+            );
+
+            // Preserve handoff message from the requesting agent
+            if (currentResponse.handoffMessage) {
+              handoffResponse.handoffMessage = currentResponse.handoffMessage;
+            }
+
+            handoffChain.push(targetAgent);
+            currentResponse = handoffResponse;
+            maxHandoffs--;
+
+          } catch (handoffError) {
+            console.error(`[SSE] Handoff failed (${fromAgent} → ${targetAgent}):`, handoffError);
+            // On handoff failure, use the last successful response
+            break;
+          }
+        }
+
+        if (maxHandoffs === 0 && currentResponse.handoffRequest) {
+          console.warn('[SSE] Max handoffs reached (3), breaking chain:', handoffChain);
+        }
+
+        // Use the final response from the handoff chain
+        aiResponse = currentResponse;
+
+        if (handoffChain.length > 1) {
+          routingReason = `Handoff chain: ${handoffChain.join(' → ')}`;
+        }
+
+        // Clear TTS promises if handoff occurred (handoff responses are non-streaming)
+        if (handoffChain.length > 1) {
+          sentenceTTSPromises.length = 0;
+        }
 
         // --- Phase 6: Send text event with full response (displayText + svg) ---
         send('text', {
@@ -373,13 +456,17 @@ export async function POST(request: NextRequest) {
           await streamAudioChunks(aiResponse.audioText, aiResponse.agentName, send);
         }
 
+        perf.mark('phase8_all_audio_sent');
         console.log(`[SSE] All audio sent at T+${Date.now() - startTime}ms`);
 
         // --- Phase 9: Done ---
+        perf.mark('phase9_done_event_start');
         send('done', {
           lessonComplete: aiResponse.lessonComplete ?? false,
           routing: { agentName: aiResponse.agentName, reason: routingReason }
         });
+        perf.mark('phase9_done_event_sent');
+        perf.summary();
 
         // --- Phase 10: Fire-and-forget side effects ---
         fireAndForgetSideEffects({

@@ -211,15 +211,15 @@ That's it. No sidebars, no menus, no distractions. Just learning.
 Let me walk you through exactly what happens during a lesson. This is the "Introduction to Fractions" lesson:
 
 **Technical Flow (Behind the Scenes):**
-1. Student speaks → Soniox WebSocket transcribes in real-time
-2. Transcript sent to Next.js API route (`/api/teach/multi-ai-stream`)
+1. Student speaks → Browser MediaRecorder captures audio as base64-encoded blob
+2. Audio blob sent directly to Gemini API (native audio processing, no separate STT service)
 3. System builds context from 3-layer memory system:
    - User profile (learning style, strengths, struggles)
    - Recent session history (last 5 interactions)
    - Current mastery level for this lesson
 4. **Adaptive directives** generated based on learning style + mastery
 5. Coordinator routes to appropriate specialist (or specialist continues if already active)
-6. Specialist generates response using Gemini 3 Flash with adaptive instructions
+6. Specialist generates response using Gemini 3 Flash with adaptive instructions and audio input
 7. **Validator agent** checks response for hallucinations (rejects & regenerates if needed)
 8. Parallel processing:
    - Google Cloud TTS converts audioText to speech (Neural2 voice)

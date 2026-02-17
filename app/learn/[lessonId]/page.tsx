@@ -32,6 +32,7 @@ import { ArrowLeft, Loader2, Volume2 } from 'lucide-react'
 import { fetchWithRetry, getErrorMessage } from '@/lib/utils/retry'
 import { useOnlineStatus } from '@/lib/hooks/useOnlineStatus'
 import { useWalkthroughStore } from '@/lib/walkthrough/walkthrough-store'
+import { PerformanceLogger } from '@/lib/utils/performance-logger'
 
 // ─── SSE Event Types ──────────────────────────────────────────────────────────
 
@@ -129,6 +130,12 @@ class AudioChunkPlayer {
   // Reference: https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData
   private scheduleQueue: Promise<void> = Promise.resolve()
 
+  // Safety timeout to handle unreliable onended events
+  // Reference: https://developer.mozilla.org/en-US/docs/Web/API/AudioScheduledSourceNode/ended_event
+  private completionTimeoutId: NodeJS.Timeout | null = null
+  private callbackFired = false
+  private static readonly COMPLETION_BUFFER_MS = 1000
+
   /**
    * Create or resume the AudioContext. Call once after a user gesture (click/tap)
    * to satisfy browser autoplay policies. Subsequent calls are no-ops if the
@@ -157,6 +164,11 @@ class AudioChunkPlayer {
     this.pendingChunks = 0
     this.totalScheduled = 0
     this.scheduleQueue = Promise.resolve()
+    this.callbackFired = false
+    if (this.completionTimeoutId) {
+      clearTimeout(this.completionTimeoutId)
+      this.completionTimeoutId = null
+    }
   }
 
   /**
@@ -164,15 +176,16 @@ class AudioChunkPlayer {
    * Chunks are queued so each one waits for the previous chunk to finish
    * decoding before scheduling — prevents out-of-order playback.
    */
-  scheduleChunk(base64Audio: string): Promise<void> {
+  scheduleChunk(base64Audio: string, perf?: PerformanceLogger): Promise<void> {
     if (!this.audioContext) return Promise.resolve()
 
     this.pendingChunks++
+    const chunkIndex = this.totalScheduled
 
     // Chain onto the queue: this chunk's decode+schedule waits for all
     // prior chunks to complete, preserving arrival order.
     const chunkPromise = this.scheduleQueue.then(() =>
-      this.decodeAndSchedule(base64Audio)
+      this.decodeAndSchedule(base64Audio, chunkIndex, perf)
     )
     this.scheduleQueue = chunkPromise
     return chunkPromise
@@ -183,10 +196,12 @@ class AudioChunkPlayer {
    * Called sequentially from the queue — never runs concurrently with itself.
    * @private
    */
-  private async decodeAndSchedule(base64Audio: string): Promise<void> {
+  private async decodeAndSchedule(base64Audio: string, chunkIndex: number, perf?: PerformanceLogger): Promise<void> {
     if (!this.audioContext) return
 
     try {
+      if (perf && chunkIndex === 0) perf.mark('audio_decode_start')
+
       // Convert base64 → ArrayBuffer
       const binaryString = atob(base64Audio)
       const bytes = new Uint8Array(binaryString.length)
@@ -198,6 +213,8 @@ class AudioChunkPlayer {
       // Reference: https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData
       const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer.slice(0))
 
+      if (perf && chunkIndex === 0) perf.mark('audio_decode_complete')
+
       // Create source node and schedule for gapless playback
       const source = this.audioContext.createBufferSource()
       source.buffer = audioBuffer
@@ -206,6 +223,10 @@ class AudioChunkPlayer {
       // Schedule at the end of the previous chunk (gapless)
       const startTime = Math.max(this.scheduledEndTime, this.audioContext.currentTime)
       source.start(startTime)
+
+      if (perf && chunkIndex === 0) {
+        perf.mark('first_audio_scheduled', { startTime, duration: audioBuffer.duration })
+      }
 
       // Update end time for next chunk
       this.scheduledEndTime = startTime + audioBuffer.duration
@@ -237,11 +258,41 @@ class AudioChunkPlayer {
   /** Signal that no more chunks will be added */
   finalize() {
     this.checkAllPlayed()
+
+    // Set timeout as safety net in case onended events don't fire reliably
+    // This is a standard fallback pattern for Web Audio API timing issues
+    // Reference: https://developer.mozilla.org/en-US/docs/Web/API/AudioScheduledSourceNode/ended_event
+    if (this.audioContext && this.totalScheduled > 0) {
+      const timeUntilDone = (this.scheduledEndTime - this.audioContext.currentTime) +
+                           (AudioChunkPlayer.COMPLETION_BUFFER_MS / 1000)
+
+      if (timeUntilDone > 0) {
+        this.completionTimeoutId = setTimeout(() => {
+          if (!this.callbackFired && this.activeSources.length > 0) {
+            if (process.env.NODE_ENV === 'development') {
+              console.warn(
+                `[AudioChunkPlayer] Timeout fired: ${this.activeSources.length} sources never fired onended - forcing completion`
+              )
+            }
+            this.activeSources = []
+            this.checkAllPlayed()
+          }
+        }, timeUntilDone * 1000)
+      }
+    }
   }
 
   private checkAllPlayed() {
     if (this.pendingChunks === 0 && this.activeSources.length === 0 && this.totalScheduled > 0) {
-      this.onAllPlayedCallback?.()
+      if (!this.callbackFired) {
+        this.callbackFired = true
+        // Clear timeout since onended events fired successfully
+        if (this.completionTimeoutId) {
+          clearTimeout(this.completionTimeoutId)
+          this.completionTimeoutId = null
+        }
+        this.onAllPlayedCallback?.()
+      }
     }
   }
 
@@ -254,6 +305,11 @@ class AudioChunkPlayer {
     this.pendingChunks = 0
     this.totalScheduled = 0
     this.onAllPlayedCallback = null
+    this.callbackFired = false
+    if (this.completionTimeoutId) {
+      clearTimeout(this.completionTimeoutId)
+      this.completionTimeoutId = null
+    }
   }
 
   /** Close the AudioContext (component unmount) */
@@ -436,6 +492,10 @@ export default function LearnPage({ params }: LearnPageProps) {
     requestBody: Record<string, any>,
     options?: { isGreeting?: boolean }
   ): Promise<void> {
+    // Performance tracking - create logger for this request
+    const perf = new PerformanceLogger(requestBody.sessionId || 'unknown')
+    perf.mark('frontend_request_start', { hasAudio: !!requestBody.audioBase64, hasMedia: !!requestBody.mediaBase64 })
+
     // Cancel any pending request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -455,12 +515,14 @@ export default function LearnPage({ params }: LearnPageProps) {
     let agentName = 'coordinator'
 
     try {
+      perf.mark('fetch_start')
       const response = await fetch('/api/teach/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
         signal: abortControllerRef.current.signal
       })
+      perf.mark('fetch_response_received')
 
       if (!response.ok || !response.body) {
         throw new Error(`SSE request failed: ${response.status}`)
@@ -503,6 +565,8 @@ export default function LearnPage({ params }: LearnPageProps) {
               audioText = textData.audioText
               agentName = textData.agentName
 
+              perf.mark('text_event_received', { agentName: textData.agentName, textLength: textData.displayText.length })
+
               // Show text/SVG immediately — student sees response ~1-1.5s in
               const teacherResponse = {
                 audioText: textData.audioText,
@@ -521,15 +585,19 @@ export default function LearnPage({ params }: LearnPageProps) {
 
               setCurrentAgent(textData.agentName)
               setVoiceState('speaking')
+              perf.mark('text_displayed')
               break
             }
 
             case 'audio': {
               const audioData = event.data as SSEAudioEvent
               if (audioData.audioBase64) {
+                if (!gotAnyAudio) {
+                  perf.mark('first_audio_chunk_received', { index: audioData.index })
+                }
                 gotAnyAudio = true
                 // Schedule for gapless playback via Web Audio API
-                audioPlayerRef.current.scheduleChunk(audioData.audioBase64)
+                audioPlayerRef.current.scheduleChunk(audioData.audioBase64, perf)
               }
               // If audioBase64 is null, this chunk failed on backend — skip it
               break
@@ -540,8 +608,11 @@ export default function LearnPage({ params }: LearnPageProps) {
               if (doneData.lessonComplete) {
                 lessonCompleteFlagSet = true
               }
+              perf.mark('sse_done_event_received')
               // Signal no more chunks coming
               audioPlayerRef.current.finalize()
+              perf.mark('audio_finalized')
+              perf.summary()
               break
             }
 
@@ -681,6 +752,10 @@ export default function LearnPage({ params }: LearnPageProps) {
   /**
    * Handle media (image/video) upload from MediaUpload component
    * Sends media to the SSE teaching endpoint with vision analysis support
+   *
+   * Note: No userMessage is sent (like audio). This ensures media uploads route
+   * directly to the lesson's specialist (e.g., math_specialist for math lessons)
+   * instead of going through coordinator routing, preserving the specialist's voice.
    */
   async function handleMediaUpload(mediaBase64: string, mimeType: string, mediaType: 'image' | 'video') {
     if (process.env.NODE_ENV === 'development') {
@@ -702,7 +777,7 @@ export default function LearnPage({ params }: LearnPageProps) {
 
     await sendTeachingRequestSSE({
       userId, sessionId, lessonId,
-      userMessage: `[MEDIA_UPLOAD] Student uploaded a ${mediaType}. Please analyze it and provide detailed feedback.`,
+      // No userMessage — routes directly to specialist based on lesson subject
       mediaBase64,
       mediaMimeType: mimeType,
       mediaType

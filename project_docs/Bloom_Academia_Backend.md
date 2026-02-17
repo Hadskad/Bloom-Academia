@@ -4,8 +4,8 @@ CORRECTED & VERIFIED - 30-Day MVP
 Complete • Memory • SVG • APIs • Deployment
 ⚠️ ALL IMPLEMENTATIONS VERIFIED FROM OFFICIAL DOCS
 
-✅ Gemini 3 Flash - gemini-3-flash-preview (NO Live API support)
-✅ Soniox - @soniox/speech-to-text-web WebSocket
+✅ Gemini 3 Flash - gemini-3-flash-preview with native audio support
+✅ Audio Input - Base64-encoded audio sent directly to Gemini API (no separate STT service)
 ✅ Google TTS - @google-cloud/text-to-speech streaming
 ✅ Supabase - supabase-js v2 with proper .select()
 ✅ Next.js 15 - App Router Web APIs
@@ -20,7 +20,7 @@ TABLE OF CONTENTS
 5.	Memory System (3 Layers)
 6.	SVG Generation
 7.	Database Schema
-8.	Soniox Integration
+8.	Gemini native audio Integration
 9.	Gemini 3 Integration
 10.	Google TTS Integration
 11.	Error Handling
@@ -32,7 +32,7 @@ TABLE OF CONTENTS
 1. ARCHITECTURE OVERVIEW
 This document contains the complete, verified backend architecture for Bloom Academia.
 
-**Core Principle**: Multi-Agent AI System using separate STT (Soniox), AI (Gemini 3 Flash), and TTS (Google Cloud) services.
+**Core Principle**: Multi-Agent AI System using Gemini 3 Flash with native audio support and Google Cloud TTS for voice output.
 
 **Why NOT Gemini Live API:**
 •	Gemini Live API only supports Gemini 2.5 Flash Native Audio models
@@ -64,7 +64,7 @@ ai-school-mvp/
 ├── app/
 │   ├── api/                          # All API routes (Next.js 15)
 │   │   ├── teach/route.ts            # Main teaching endpoint
-│   │   ├── stt/temp-key/route.ts     # Soniox temporary API key
+│   │   ├── stt/temp-key/route.ts     # Gemini native audio temporary API key
 │   │   ├── tts/synthesize/route.ts   # Google TTS synthesis
 │   │   ├── memory/
 │   │   │   ├── profile/route.ts      # User profile CRUD
@@ -86,7 +86,7 @@ ai-school-mvp/
 │   │   ├── prompts.ts                # System prompts
 │   │   ├── svg-generator.ts          # SVG prompt templates
 │   │   └── context-builder.ts        # Memory context builder
-│   ├── stt/soniox-client.ts          # Soniox wrapper
+│   ├── stt/soniox-client.ts          # Gemini native audio wrapper
 │   ├── tts/google-tts.ts             # Google TTS client
 │   ├── db/
 │   │   ├── supabase.ts               # Supabase client
@@ -113,7 +113,7 @@ Complete verified flow from student speech to AI response:
          │ Raw Audio (Web Audio API)
          ▼
 ┌──────────────────────┐
-│ Soniox WebSocket STT │ ✅ @soniox/speech-to-text-web
+│ Gemini native audio WebSocket STT │ ✅ @soniox/speech-to-text-web
 │ • Real-time transc.  │    Model: stt-rt-preview
 │ • Endpoint detection │    Features: 60+ languages
 └────────┬─────────────┘
@@ -147,7 +147,7 @@ Complete verified flow from student speech to AI response:
 └─────────────────────────────────┘
 
 Latency Breakdown:
-•	Soniox STT: ~100-300ms
+•	Gemini native audio STT: ~100-300ms
 •	Context Building: ~50-100ms (DB queries)
 •	Gemini 3 Flash: ~1-2s (with thinking)
 •	Google TTS: ~500ms-1s
@@ -165,7 +165,7 @@ Request Body:
   "userId": "uuid",
   "lessonId": "uuid",
   "sessionId": "uuid",
-  "userMessage": "transcribed text from Soniox",
+  "userMessage": "transcribed text from Gemini native audio",
   "messageType": "text" | "audio" | "media" | "image",
   "audio": { "base64": "...", "mimeType": "audio/wav" },  // Optional
   "image": { "base64": "...", "mimeType": "image/jpeg" }  // Optional
@@ -255,8 +255,8 @@ export async function POST(request: NextRequest) {
   }
 }
  
-4.2 GET /api/stt/temp-key - Soniox Temporary API Key
-Purpose: Generate temporary API key for client-side Soniox usage
+4.2 GET /api/stt/temp-key - Gemini native audio Temporary API Key
+Purpose: Generate temporary API key for client-side Gemini native audio usage
 
 // app/api/stt/temp-key/route.ts
 import { NextResponse } from 'next/server'
@@ -763,21 +763,21 @@ Token object structure in onPartialResult:
 - confidence: number - Confidence score (0.0-1.0)
 - start_ms/end_ms: number - Timestamps (optional)
 
-8.3 Frontend: Soniox Client Setup
+8.3 Frontend: Gemini native audio Client Setup
 // components/VoiceInput.tsx
-import { SonioxClient } from '@soniox/speech-to-text-web'
+import { Gemini native audioClient } from '@soniox/speech-to-text-web'
 import { useState, useRef } from 'react'
 
 export function VoiceInput() {
   const [isListening, setIsListening] = useState(false)
   const [transcript, setTranscript] = useState('')
-  const sonioxClient = useRef<SonioxClient | null>(null)
+  const sonioxClient = useRef<Gemini native audioClient | null>(null)
   const finalTranscriptRef = useRef<string>('')
 
   async function startListening() {
-    // Initialize Soniox client with callbacks in constructor
+    // Initialize Gemini native audio client with callbacks in constructor
     // Note: Callbacks can be in constructor OR start() - start() overrides constructor
-    sonioxClient.current = new SonioxClient({
+    sonioxClient.current = new Gemini native audioClient({
       // Async function to fetch temporary API key from backend
       apiKey: async () => {
         const response = await fetch('/api/stt/temp-key')
@@ -818,7 +818,7 @@ export function VoiceInput() {
       },
       // Called on errors
       onError: (status, message) => {
-        console.error('Soniox error:', status, message)
+        console.error('Gemini native audio error:', status, message)
         setIsListening(false)
       }
     })
@@ -964,7 +964,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
-# Soniox
+# Gemini native audio
 SONIOX_API_KEY=your_soniox_api_key
 
 # Google Cloud TTS
@@ -1003,7 +1003,7 @@ Backend Setup:
 •	☐ Implement Google TTS client
 
 Testing:
-•	☐ Test Soniox transcription
+•	☐ Test Gemini native audio transcription
 •	☐ Test Gemini 3 Flash responses
 •	☐ Test Google TTS audio generation
 •	☐ Test memory system updates
@@ -1018,7 +1018,7 @@ Deployment:
 CONCLUSION
 This document provides the complete, verified backend architecture for the AI-powered school platform MVP. All implementations have been verified against official documentation from:
 •	Google Gemini API documentation (ai.google.dev)
-•	Soniox Speech-to-Text documentation (soniox.com/docs)
+•	Gemini native audio Speech-to-Text documentation (soniox.com/docs)
 •	Google Cloud Text-to-Speech documentation (cloud.google.com)
 •	Supabase JavaScript client documentation (supabase.com/docs)
 •	Next.js 15 documentation (nextjs.org/docs)

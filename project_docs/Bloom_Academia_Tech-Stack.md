@@ -27,10 +27,10 @@ API Layer	Next.js API Routes	Serverless functions
 Database	Supabase (PostgreSQL)	Managed database + auth
 ORM/Client	Supabase JS Client	Database interactions
 Real-time	WebSocket	Bidirectional voice streaming
-AI / ML		
-AI Model	Gemini 3 Flash	Core AI teaching engine
-Speech-To-Text	Soniox	Real-time audio transcription via WebSocket
-Text-To-Speech	Google cloud TTS	High-quality voice synthesis (Neural2 voices, streaming audio generation)
+AI / ML
+AI Model	Gemini 3 Flash with native audio support	Core AI teaching engine (audio sent directly to Gemini)
+Speech-To-Text	Gemini native audio	Base64-encoded audio sent directly to Gemini API (no separate STT service)
+Text-To-Speech	Google Cloud TTS	High-quality voice synthesis (Neural2 voices, streaming audio generation)
 Memory System	Custom 3 layer architecture	Personalized learning context (User Profile + Session Memory + Long-term Analysis)
 SVG generation	Gemini 3 Flash	On-the-fly visual aids generated during teaching responses
 INFRASTRUCTURE		
@@ -222,8 +222,8 @@ API Routes we'll create:
 •	Generates audio via Google Cloud TTS
 •	Returns: text response, SVG code, audio base64
 •	Saves interaction to session memory
-2. /api/stt/temp-key (Soniox Authentication)
-•	GET endpoint to generate temporary Soniox API key
+2. /api/stt/temp-key (Gemini native audio Authentication)
+•	GET endpoint to generate temporary Gemini native audio API key
 •	Keeps permanent API key secret from frontend
 •	Returns short-lived key for client-side WebSocket connection
 •	Expires in 60 seconds (renewable)
@@ -382,8 +382,8 @@ Pricing:
 •	Free tier available for gemini-3-flash-preview
 •	Estimated cost per 30-min lesson: ~$0.05-0.10
 
-4.2 Soniox (Speech-to-Text)
-What is Soniox:
+4.2 Gemini native audio (Speech-to-Text)
+What is Gemini native audio:
 •	Real-time speech recognition via WebSocket
 •	Ultra-low latency transcription (~100-300ms)
 •	60+ languages supported
@@ -646,7 +646,7 @@ Core Stack (Implemented & Deployed)
 •	**Supabase** (PostgreSQL + Auth) ✅
 •	**Gemini 3 Flash** (gemini-3-flash-preview) ✅
 •	**@google/genai** SDK v1.35.0+ (with ThinkingLevel) ✅
-•	**Soniox** (@soniox/speech-to-text-web) ✅
+•	**Gemini native audio** (@soniox/speech-to-text-web) ✅
 •	**Google Cloud TTS** Neural2 Streaming ✅
 •	**Web Audio API** (voice capture/playback) ✅
 •	**Vercel** (hosting + auto-deploy) ✅

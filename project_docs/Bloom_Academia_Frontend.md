@@ -333,7 +333,7 @@ app/
 ├── api/                      # API routes
 │   ├── teach/
 │   │   └── multi-ai-stream/route.ts # Main teaching endpoint
-│   ├── stt/temp-key/route.ts # Soniox API key
+│   ├── stt/temp-key/route.ts # Gemini native audio API key
 │   └── tts/synthesize/route.ts # Google TTS
 ├── layout.tsx                # Root layout
 └── globals.css               # Global styles
@@ -341,7 +341,7 @@ app/
 components/
 ├── ui/                       # shadcn components
 ├── teaching/
-│   ├── VoiceInput.tsx        # Soniox integration
+│   ├── VoiceInput.tsx        # Gemini native audio integration
 │   ├── TeacherResponse.tsx   # Audio + SVG display
 │   └── Whiteboard.tsx        # SVG rendering
 ├── lessons/

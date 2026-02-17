@@ -1,4 +1,7 @@
-Bloom Academia
+                         Bloom Academia      
+
+
+Website link: bloom-academia.vercel.app
 
 Bloom Academia is an AI-powered school designed to deliver mastery-based, one-on-one education at global scale. It transforms the proven effectiveness of personalized tutoring into a scalable system using a multi-agent AI architecture.
 
@@ -22,7 +25,7 @@ Bloom Academia is an AI-powered school designed to deliver mastery-based, one-on
 
 💡 The Solution
 
--Bloom Academia is not an AI tutor, it is a school system.
+-Bloom Academia is not an AI tutor, it is a school system in the making.
 
 -Each learner is paired with personal AI teachers that:
 
@@ -45,7 +48,7 @@ Bloom Academia is an AI-powered school designed to deliver mastery-based, one-on
 
 Bloom Academia is built as a hierarchical multi-agent system:
 
-Teaching Agents
+---Teaching Agents
 
 Subject specialists (Math, Science, English, etc.)
 
@@ -53,7 +56,7 @@ Personalized instruction per learner
 
 Multimodal output (voice, text, visuals)
 
--Coordinator Agent
+---Coordinator Agent
 
 Routes learner input intelligently
 
@@ -61,7 +64,7 @@ Maintains session continuity
 
 Handles handoffs between agents
 
--Validator Agent
+---Validator Agent
 
 Independently verifies specialists output
 
@@ -69,7 +72,7 @@ Checks factual accuracy and curriculum alignment
 
 Prevents hallucinations from reaching learners
 
--Assessor Agent
+---Assessor Agent
 
 Conducts mastery-based assessments
 
@@ -126,7 +129,7 @@ No reliance on physical schools
 
 AI Models: Google Gemini 3 (Flash + Pro)
 
-Speech: STT + TTS pipeline
+Speech: Neural2 TTS
 
 Frontend: Web-based learning interface
 
@@ -150,6 +153,19 @@ This repository is a proof of feasibility, not a full curriculum rollout.
 
 
 
+                                Gemini Integration
+Bloom Academia is built entirely around Google's Gemini 3 model family, using two variants across a nine-agent architecture. Gemini 3 Flash powers eight agents, a Coordinator, five subject specialists (Math, Science, English, History, Art), an Assessor, and a Motivator, delivering fast, cost-effective teaching responses. Gemini 3 Pro is reserved exclusively for the Validator agent, where its superior reasoning capability performs five-category quality checks on every specialist response before it reaches students.
+
+The platform leverages core Gemini 3 features.
+
+Native multimodal input allows student voice to stream directly to Gemini as base64-encoded audio, this also allows uploading of handwritten notes, a student could also record himself solving a math problem, and get corrected where he/she got it wrong or right.
+Configurable thinking levels give each agent a distinct cognitive profile, HIGH for Math, Validator, and History (deep reasoning), MEDIUM for Science (balanced inquiry), LOW for the Coordinator (fast routing).
+Google Search grounding connects History and Science specialists to real-time web information with source citations.
+Structured output with JSON schema enforcement ensures every response returns validated audioText, displayText, and svg fields.
+Context caching with two-hour TTL reduces token costs, maintaining separate caches per model variant
+
+
+
 🚀 What’s Next
 
 Grade 1–12 curriculum development with educators
@@ -167,3 +183,5 @@ NGO and government pilot deployments
 Every child deserves personal teachers.
 
 Bloom Academia aims to become the infrastructure layer for global education, delivering elite learning outcomes regardless of geography, income, or circumstance.
+
+bloom-academia.vercel.app
