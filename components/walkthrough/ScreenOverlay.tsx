@@ -68,17 +68,6 @@ const SCREEN_DESCRIPTIONS: Partial<Record<WalkthroughStep, { title: string; desc
       '🔄 Option to retry if below threshold',
     ],
   },
-  'lesson-complete': {
-    title: 'Lesson Completion',
-    description: 'Celebration screen that rewards achievement and shows learning metrics.',
-    highlights: [
-      '🎉 Celebration animation for accomplishment',
-      '⏱️ Time spent in lesson',
-      '❓ Questions asked during session',
-      '📈 Mastery percentage achieved',
-      '➡️ Recommendation for next lesson',
-    ],
-  },
   'progress-dashboard': {
     title: 'Progress Dashboard',
     description: 'Students track their entire learning journey across all subjects and lessons.',

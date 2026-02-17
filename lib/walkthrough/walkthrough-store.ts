@@ -11,7 +11,6 @@ export type WalkthroughStep =
   | 'curriculum-builder'
   | 'assessment-mode'
   | 'assessment-results'
-  | 'lesson-complete'
   | 'progress-dashboard'
   | 'admin-dashboard'
   | 'agent-metrics';
@@ -46,7 +45,6 @@ export const WALKTHROUGH_STEPS: WalkthroughStep[] = [
   'curriculum-builder',
   'assessment-mode',
   'assessment-results',
-  'lesson-complete',
   'progress-dashboard',
   'admin-dashboard',
   'agent-metrics',
@@ -62,7 +60,6 @@ export const STEP_ROUTES: Record<WalkthroughStep, string> = {
   'curriculum-builder': '/admin/curriculum-builder',
   'assessment-mode': '/learn/0d27645e-54b0-418f-b62f-e848087d7db9',
   'assessment-results': '/learn/0d27645e-54b0-418f-b62f-e848087d7db9',
-  'lesson-complete': '/lessons/0d27645e-54b0-418f-b62f-e848087d7db9/complete',
   'progress-dashboard': '/progress',
   'admin-dashboard': '/admin',
   'agent-metrics': '/admin',
@@ -78,7 +75,6 @@ export const STEP_TITLES: Record<WalkthroughStep, string> = {
   'curriculum-builder': 'Curriculum Builder',
   'assessment-mode': 'Assessment Mode',
   'assessment-results': 'Assessment Results',
-  'lesson-complete': 'Lesson Completion',
   'progress-dashboard': 'Progress Dashboard',
   'admin-dashboard': 'Admin Dashboard',
   'agent-metrics': 'AI Agent Metrics',
